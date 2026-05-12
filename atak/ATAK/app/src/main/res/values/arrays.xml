@@ -172,6 +172,16 @@
         <item>20</item>
     </string-array>
 
+    <string-array name="track_history_timezone_entries">
+        <item>UTC</item>
+        <item>Local Device Time</item>
+    </string-array>
+
+    <string-array translatable="false" name="track_history_timezone_values">
+        <item>UTC</item>
+        <item>Local</item>
+    </string-array>
+
     <string-array name="elevation_units_label">
         <item>@string/elevation_unit_feet</item>
         <item>@string/elevation_unit_meters</item>

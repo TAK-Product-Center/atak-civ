@@ -833,6 +833,8 @@
   <string name="kml_export_timestaps_summ">Check to use gx:Track with timestamps (more detailed info), uncheck to use LineString (more compatibility).</string>
   <string name="Server_track_time_gap_title">Server track time gap (minutes)</string>
   <string name="Server_track_time_gap_summ">When searching the server for tracks, split into separate tracks when consecutive breadcrumbs are temporally more than this far apart (default: 10 minutes).</string>
+  <string name="track_history_timezone_title">Track Time Zone</string>
+  <string name="track_history_timezone_summ">Time zone used for displaying track timestamps.</string>
   <string name="pers_self_track_title">Persistent Self Track</string>
   <string name="pers_self_track_summ">Check to display all tracks since startup.</string>
   <string name="set_max_num_of_crumbs_title">Set Max Number of Bread Crumbs</string>
