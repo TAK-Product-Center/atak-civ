@@ -49,8 +49,6 @@ import com.atakmap.coremap.maps.coords.GeoPointMetaData;
 import com.atakmap.coremap.maps.time.CoordinatedTime;
 import com.atakmap.map.CameraController;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.TimeZone;
 
 public class TrackDetailsView extends LinearLayout implements
@@ -91,15 +89,13 @@ public class TrackDetailsView extends LinearLayout implements
     }
 
     public void setStartDateTime(long millis) {
-        Date d = new Date(millis);
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd",
-                LocaleUtil.getCurrent());
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        _startDate.setText(sdf.format(d));
-
-        sdf = new SimpleDateFormat("HH:mm:ss'Z'", LocaleUtil.getCurrent());
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        _startTime.setText(sdf.format(d));
+        String tzPref = _prefs.get("track_history_timezone", "UTC")
+                .toString();
+        TimeZone tz = TrackDateTimeFormatter.resolveTimeZone(tzPref);
+        _startDate.setText(TrackDateTimeFormatter.formatDate(
+                millis, tz, LocaleUtil.getCurrent()));
+        _startTime.setText(TrackDateTimeFormatter.formatTime(
+                millis, tz, LocaleUtil.getCurrent()));
     }
 
     @Override

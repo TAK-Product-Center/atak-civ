@@ -41,6 +41,13 @@
             android:title="@string/Server_track_time_gap_title"
             android:inputType = "number"
             android:defaultValue="10"/>
+        <com.atakmap.android.gui.PanListPreference
+            android:entries="@array/track_history_timezone_entries"
+            android:entryValues="@array/track_history_timezone_values"
+            android:key="track_history_timezone"
+            android:title="@string/track_history_timezone_title"
+            android:summary="@string/track_history_timezone_summ"
+            android:defaultValue="UTC"/>
    </PreferenceCategory>
    <PreferenceCategory
        android:title="@string/breadcrumbPreferences"
