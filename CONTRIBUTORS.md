@@ -11,3 +11,4 @@
 ## Note for U.S. Federal Employees
 
 If you're a U.S. Federal Government employee and use a `*.mil` or `*.gov` email address to agree to the DCO, we interpret your signed DCO to mean that the contribution was created in whole or in part by you as part of your job with the U.S. Federal Government and that your contribution is not subject to copyright protections.
+- 2026-09-02 Ariel F arielfrja@gmail.com
