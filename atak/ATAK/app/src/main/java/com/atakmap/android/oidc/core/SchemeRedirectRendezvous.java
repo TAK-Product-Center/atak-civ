@@ -20,9 +20,10 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
 
     /**
      * Called by the redirect activity. Returns false when no attempt is
-     * waiting, when the URI is not this receiver's redirect, or when the
-     * state does not match the bound attempt (T12: ignored, the attempt
-     * keeps waiting for the real redirect).
+     * waiting, when the URI is not this receiver's redirect, when the waiting
+     * attempt has not bound a state yet, or when the state does not match the
+     * bound attempt (T12: ignored, the attempt keeps waiting for the real
+     * redirect).
      */
     public static boolean deliver(String redirectUri) {
         if (redirectUri == null || !redirectUri.startsWith(REDIRECT_URI)) {
@@ -44,6 +45,19 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
         }
     }
 
+    /**
+     * True while a started, uncancelled attempt is waiting for its redirect.
+     * The redirect activity uses this to tell "no attempt at all" (process
+     * death or expiry, the user needs a hint, F-24) from "an attempt is
+     * waiting but this delivery did not match" (ignored silently).
+     */
+    public static boolean isWaiting() {
+        synchronized (MAILBOX_LOCK) {
+            return waiting != null && waiting.started && !waiting.cancelled
+                    && waiting.deliveredUri == null;
+        }
+    }
+
     @Override
     public void start() throws OidcException {
         synchronized (MAILBOX_LOCK) {
@@ -51,8 +65,8 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
                 throw new OidcException(OidcError.BROWSER_CANCELLED,
                         "another redirect attempt is active");
             }
+            // expectedState is kept: it is bound before start (v02).
             deliveredUri = null;
-            expectedState = null;
             cancelled = false;
             started = true;
             waiting = this;

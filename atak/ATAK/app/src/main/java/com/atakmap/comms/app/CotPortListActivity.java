@@ -499,9 +499,24 @@ public abstract class CotPortListActivity extends MetricActivity {
         Long expiration = inputData.getLong(TAKServer.EXPIRATION_KEY);
 
         if (new TAKServer(inputData).isOidc()) {
-            CertificateEnrollmentClient.getInstance().enrollWithOidc(this,
-                    description, connectString, expiration, null, true,
-                    !enrollUseTrust);
+            // F-28: a presentation-only edit (description, compression) of a
+            // connection that is already enrolled through SSO keeps its
+            // certificate and does not open the browser. Enroll when there is
+            // no certificate for this host and port, or when the connection
+            // was just switched to SSO from another authentication method.
+            boolean hasCertificate = AtakCertificateDatabase
+                    .getCertificateForServerAndPort(
+                            AtakCertificateDatabaseIFace.TYPE_CLIENT_CERTIFICATE,
+                            newServer, newNcs.getPort()) != null;
+            boolean wasOidc = currentlyEditingCotPort != null
+                    && currentlyEditingCotPort.isOidc();
+            if (!hasCertificate || !wasOidc) {
+                CertificateEnrollmentClient.getInstance().enrollWithOidc(this,
+                        description, connectString, expiration, null, true,
+                        !enrollUseTrust);
+            } else {
+                Log.d(TAG, "SSO connection edited, certificate kept");
+            }
             return;
         }
 

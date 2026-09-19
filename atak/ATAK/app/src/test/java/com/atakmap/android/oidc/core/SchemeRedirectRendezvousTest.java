@@ -26,6 +26,7 @@ public final class SchemeRedirectRendezvousTest {
         final SchemeRedirectRendezvous receiver = new SchemeRedirectRendezvous();
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
+            receiver.bindState("y");
             receiver.start();
             final String uri = "com.atakmap.app.civ:/oidc/callback?code=x&state=y";
             Future<String> awaited = executor.submit(new Callable<String>() {
@@ -72,6 +73,59 @@ public final class SchemeRedirectRendezvousTest {
                 instanceof SchemeRedirectRendezvous);
         assertTrue(RedirectReceivers.forMode(null)
                 instanceof SchemeRedirectRendezvous);
+    }
+
+    /** v02 (Silas L4, Astra rank 8): a started but unbound receiver accepts nothing. */
+    @Test
+    public void unboundStartedReceiverRejectsEveryDeliveryAndStillWaits() throws Exception {
+        SchemeRedirectRendezvous receiver = new SchemeRedirectRendezvous();
+        receiver.start();
+        try {
+            assertTrue(SchemeRedirectRendezvous.isWaiting());
+            assertFalse(SchemeRedirectRendezvous.deliver(
+                    SchemeRedirectRendezvous.REDIRECT_URI + "?code=evil&state=x"));
+            assertFalse(SchemeRedirectRendezvous.deliver(
+                    SchemeRedirectRendezvous.REDIRECT_URI + "?code=evil"));
+            // The attempt is intact: binding now lets the real redirect through.
+            receiver.bindState("x");
+            assertTrue(SchemeRedirectRendezvous.deliver(
+                    SchemeRedirectRendezvous.REDIRECT_URI + "?code=good&state=x"));
+            assertEquals(SchemeRedirectRendezvous.REDIRECT_URI + "?code=good&state=x",
+                    receiver.awaitRedirect(1000));
+        } finally {
+            receiver.close();
+        }
+    }
+
+    /** v02: the state bound before start survives start, so publication is never unbound. */
+    @Test
+    public void stateBoundBeforeStartIsHonouredImmediatelyAfterStart() throws Exception {
+        SchemeRedirectRendezvous receiver = new SchemeRedirectRendezvous();
+        receiver.bindState("pre");
+        receiver.start();
+        try {
+            assertFalse(SchemeRedirectRendezvous.deliver(
+                    SchemeRedirectRendezvous.REDIRECT_URI + "?code=evil&state=other"));
+            assertTrue(SchemeRedirectRendezvous.deliver(
+                    SchemeRedirectRendezvous.REDIRECT_URI + "?code=good&state=pre"));
+            assertFalse(SchemeRedirectRendezvous.isWaiting());
+        } finally {
+            receiver.close();
+        }
+    }
+
+    /** F-24: isWaiting is false when nothing was started, after cancel and after close. */
+    @Test
+    public void isWaitingIsFalseWithoutAnAttemptAndAfterCancel() throws Exception {
+        assertFalse(SchemeRedirectRendezvous.isWaiting());
+        SchemeRedirectRendezvous receiver = new SchemeRedirectRendezvous();
+        receiver.bindState("s");
+        receiver.start();
+        assertTrue(SchemeRedirectRendezvous.isWaiting());
+        receiver.cancel();
+        assertFalse(SchemeRedirectRendezvous.isWaiting());
+        receiver.close();
+        assertFalse(SchemeRedirectRendezvous.isWaiting());
     }
 
     /** T12 (F01): a callback with the wrong state is ignored and the attempt keeps waiting. */

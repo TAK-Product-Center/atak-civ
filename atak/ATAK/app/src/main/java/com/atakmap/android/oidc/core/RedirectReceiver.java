@@ -8,9 +8,11 @@ public interface RedirectReceiver {
     String getRedirectUri();
 
     /**
-     * Binds the state value this attempt expects. Once bound, a redirect whose
-     * state does not match is ignored (T12: a stray or hostile callback must
-     * not consume the attempt). Call before the browser is launched.
+     * Binds the state value this attempt expects. A redirect whose state does
+     * not match is ignored, and so is every redirect while nothing is bound
+     * (T12: a stray or hostile callback must not consume the attempt). Call
+     * before {@link #start()}: the state survives start, so the receiver is
+     * never published unbound.
      */
     void bindState(String expectedState);
 

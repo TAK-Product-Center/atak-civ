@@ -154,13 +154,17 @@ public class OidcAuthorizationFlow {
             RedirectReceiver currentReceiver = RedirectReceivers
                     .forMode(config.getRedirectMode());
             receiver = currentReceiver;
+            // T12 / v02 (Silas L4): the state is bound before the receiver is
+            // published, so there is no window in which a stray or hostile
+            // callback can fill the mailbox. The receiver rejects everything
+            // while unbound.
+            final String state = AuthorizationAttempt.newState();
+            currentReceiver.bindState(state);
             currentReceiver.start();
             checkCancelled();
 
             attempt = AuthorizationAttempt.create(config.getAndroidClientId(),
-                    currentReceiver.getRedirectUri());
-            // T12: only a redirect carrying this attempt's state is accepted.
-            currentReceiver.bindState(attempt.getState());
+                    currentReceiver.getRedirectUri(), state);
             String authorizationUrl = attempt.buildAuthorizationUrl(
                     config.getAuthorizationEndpoint(), config.getScopes());
             launchBrowser(authorizationUrl);

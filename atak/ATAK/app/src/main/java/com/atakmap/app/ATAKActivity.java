@@ -65,6 +65,7 @@ import com.atakmap.android.navigation.views.NavView;
 import com.atakmap.android.network.AtakAuthenticatedConnectionCallback;
 import com.atakmap.android.network.AtakWebProtocolHandlerCallbacks;
 import com.atakmap.android.network.TakServerHttpsProtocolHandler;
+import com.atakmap.android.oidc.OidcRedirectActivity;
 import com.atakmap.android.overlay.DefaultMapGroupOverlay;
 import com.atakmap.android.preference.AtakPreferenceFragment;
 import com.atakmap.android.preference.AtakPreferences;
@@ -115,6 +116,7 @@ import com.atakmap.map.opengl.GLMapRenderable;
 import com.atakmap.net.AtakAuthenticationDatabase;
 import com.atakmap.net.AtakAuthenticationHandlerHTTP;
 import com.atakmap.net.AtakCertificateDatabase;
+import com.atakmap.net.CertificateEnrollmentClient;
 import com.atakmap.net.CertificateManager;
 import com.atakmap.spatial.SpatialCalculator;
 import com.atakmap.util.ConfigOptions;
@@ -1652,6 +1654,16 @@ public class ATAKActivity extends MapActivity implements
     public void onNewIntent(Intent intent) {
         Log.d(TAG, "new intent received");
         super.onNewIntent(intent);
+
+        // F-24: an OIDC redirect arrived with no sign-in attempt waiting
+        // (process death or expiry). Runs here for a warm process and, on
+        // cold start, when COMPONENTS_CREATED replays the launch intent.
+        if (intent != null && intent.getBooleanExtra(
+                OidcRedirectActivity.EXTRA_REDIRECT_EXPIRED, false)) {
+            intent.removeExtra(OidcRedirectActivity.EXTRA_REDIRECT_EXPIRED);
+            CertificateEnrollmentClient.getInstance()
+                    .showOidcRedirectExpired(this);
+        }
 
         if ((intent != null) && (intent.getExtras() != null)
                 && intent.getExtras().containsKey("internalIntent")) {

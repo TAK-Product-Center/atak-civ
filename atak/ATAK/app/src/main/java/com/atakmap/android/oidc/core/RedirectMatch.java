@@ -7,12 +7,13 @@ final class RedirectMatch {
     }
 
     /**
-     * True when the redirect carries the bound state (or no state is bound
-     * yet). Uses a constant time comparison. Never returns the code.
+     * True only when a state is bound and the redirect carries exactly that
+     * state (v02, Silas L4 / Astra rank 8: an unbound receiver accepts
+     * nothing). Uses a constant time comparison. Never returns the code.
      */
     static boolean stateMatches(String redirectUri, String expectedState) {
         if (expectedState == null) {
-            return true;
+            return false;
         }
         String state = RedirectResponse.queryParams(redirectUri).get("state");
         return ConstantTime.equals(expectedState, state);

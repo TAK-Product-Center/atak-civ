@@ -37,15 +37,48 @@ public final class TakOidcConfigTest {
     }
 
     @Test
-    public void androidRedirectLoopbackSchemeAbsentAndGarbageMapAsRequired() throws Exception {
+    public void androidRedirectLoopbackSchemeAndAbsentMapAsRequired() throws Exception {
         assertEquals(RedirectMode.LOOPBACK,
                 TakOidcConfig.parse(document(null, "loopback")).getRedirectMode());
         assertEquals(RedirectMode.SCHEME,
                 TakOidcConfig.parse(document(null, "scheme")).getRedirectMode());
         assertEquals(RedirectMode.SCHEME,
                 TakOidcConfig.parse(document(null, null)).getRedirectMode());
-        assertEquals(RedirectMode.SCHEME,
-                TakOidcConfig.parse(document(null, "garbage")).getRedirectMode());
+    }
+
+    /** v02 D2: an unknown redirect value is a configuration error, not a silent scheme fallback. */
+    @Test
+    public void unknownAndroidRedirectIsDiscoveryFailedNamingTheField() {
+        assertDiscoveryFailure(document(null, "garbage"), "android_redirect");
+        assertDiscoveryFailure(document(null, ""), "android_redirect");
+        assertDiscoveryFailure(documentRaw(null, "\"android_redirect\":7"), "android_redirect");
+    }
+
+    /** v02 D2: the server emits scopes as one space delimited string; both shapes normalise. */
+    @Test
+    public void scopesAcceptedAsArrayOrSpaceDelimitedStringAndNormaliseToTheSameList()
+            throws Exception {
+        assertEquals(Arrays.asList("openid", "profile", "groups"),
+                TakOidcConfig.parse(document("[\"openid\",\"profile\",\"groups\"]", null))
+                        .getScopes());
+        assertEquals(Arrays.asList("openid", "profile", "groups"),
+                TakOidcConfig.parse(document("\"openid profile groups\"", null)).getScopes());
+        assertEquals(Arrays.asList("openid", "email"),
+                TakOidcConfig.parse(document("\"  openid   email \"", null)).getScopes());
+        assertEquals(Arrays.asList("openid", "email"),
+                TakOidcConfig.parse(document("[\" openid\",\"email \"]", null)).getScopes());
+    }
+
+    /** v02 D2: an empty or wrongly typed scopes field is rejected, never sent as an empty scope. */
+    @Test
+    public void emptyOrWrongTypedScopesAreDiscoveryFailed() {
+        assertDiscoveryFailure(document("[]", null), "scopes");
+        assertDiscoveryFailure(document("\"\"", null), "scopes");
+        assertDiscoveryFailure(document("\"   \"", null), "scopes");
+        assertDiscoveryFailure(document("[\"openid\",\"\"]", null), "scopes");
+        assertDiscoveryFailure(document("[\"openid\",3]", null), "scopes");
+        assertDiscoveryFailure(document("42", null), "scopes");
+        assertDiscoveryFailure(document("{\"a\":\"openid\"}", null), "scopes");
     }
 
     @Test
@@ -88,6 +121,19 @@ public final class TakOidcConfigTest {
             return;
         }
         throw new AssertionError("invalid discovery document was accepted");
+    }
+
+    private static String documentRaw(String scopes, String rawRedirectField) {
+        StringBuilder json = new StringBuilder(documentWithUrls(
+                "https://idp.local", "https://idp.local/auth", "https://idp.local/token"));
+        json.deleteCharAt(json.length() - 1);
+        if (scopes != null) {
+            json.append(",\"scopes\":").append(scopes);
+        }
+        if (rawRedirectField != null) {
+            json.append(',').append(rawRedirectField);
+        }
+        return json.append('}').toString();
     }
 
     private static String document(String scopes, String redirect) {

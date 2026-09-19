@@ -68,7 +68,7 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
                 socket.bind(new InetSocketAddress(loopback, 0));
                 serverSocket = socket;
                 cancelled = false;
-                expectedState = null;
+                // expectedState is kept: it is bound before start (v02).
             } catch (IOException e) {
                 throw new OidcException(OidcError.BROWSER_CANCELLED,
                         "unable to start redirect receiver", e);
@@ -112,7 +112,9 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
          * wrong state, oversized line, silent client) gets a reply or is dropped
          * and the listener keeps waiting. Closing the port on a bad request
          * would free it for another process to bind before the browser delivers
-         * the real redirect. One absolute deadline covers every connection.
+         * the real redirect. One absolute deadline covers every connection and
+         * every single read inside a connection (v02, Astra rank 8: a client
+         * dripping one byte per 100 ms must not hold the attempt open past it).
          */
         long deadline = System.nanoTime() + Math.max(0, timeoutMillis) * 1000000L;
         try {
@@ -131,8 +133,7 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
                     if (!accepted.getInetAddress().isLoopbackAddress()) {
                         continue;
                     }
-                    accepted.setSoTimeout(timeout(Math.min(remaining, CLIENT_READ_MILLIS)));
-                    String line = readRequestLine(accepted.getInputStream());
+                    String line = readRequestLine(accepted, deadline);
                     String redirect = requestLineToUri(line, socket.getLocalPort());
                     boolean accept = redirect != null
                             && stateMatches(redirect);
@@ -181,11 +182,23 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
         }
     }
 
-    /** Reads one CRLF or LF terminated line of at most MAX_REQUEST_LINE bytes. */
-    private static String readRequestLine(InputStream in) throws IOException {
+    /**
+     * Reads one CRLF or LF terminated line of at most MAX_REQUEST_LINE bytes.
+     * Every read is bounded by the per-client inactivity timeout and by the
+     * absolute deadline, whichever comes first; passing the deadline ends the
+     * attempt.
+     */
+    private String readRequestLine(Socket accepted, long deadline)
+            throws IOException, OidcException {
+        InputStream in = accepted.getInputStream();
         byte[] buffer = new byte[MAX_REQUEST_LINE];
         int n = 0;
         while (true) {
+            long remaining = (deadline - System.nanoTime()) / 1000000L;
+            if (remaining <= 0 || isCancelled()) {
+                throw cancelled();
+            }
+            accepted.setSoTimeout(timeout(Math.min(remaining, CLIENT_READ_MILLIS)));
             int b = in.read();
             if (b < 0) {
                 return null;

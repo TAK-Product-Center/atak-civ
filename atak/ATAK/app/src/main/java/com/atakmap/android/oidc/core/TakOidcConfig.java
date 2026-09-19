@@ -50,10 +50,32 @@ public final class TakOidcConfig {
         requireHttps("token_endpoint", tokenEndpoint);
 
         List<String> scopes = parseScopes(object.get("scopes"));
-        Object redirect = object.get("android_redirect");
-        String redirectValue = redirect instanceof String ? (String) redirect : null;
+        RedirectMode redirectMode = parseRedirectMode(object.get("android_redirect"));
         return new TakOidcConfig(issuer, authorizationEndpoint, tokenEndpoint,
-                androidClientId, scopes, RedirectMode.fromWellKnown(redirectValue));
+                androidClientId, scopes, redirectMode);
+    }
+
+    /**
+     * Absent means scheme (the pre-v0.2 server never sent the field). Any
+     * present value must be exactly "scheme" or "loopback": a typo in the
+     * server configuration must not silently pick a redirect the IdP has not
+     * registered.
+     */
+    private static RedirectMode parseRedirectMode(Object value) throws OidcException {
+        if (value == null) {
+            return RedirectMode.SCHEME;
+        }
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            if ("scheme".equals(text)) {
+                return RedirectMode.SCHEME;
+            }
+            if ("loopback".equals(text)) {
+                return RedirectMode.LOOPBACK;
+            }
+        }
+        throw new OidcException(OidcError.DISCOVERY_FAILED,
+                "android_redirect must be scheme or loopback");
     }
 
     private static String requireString(Map<String, Object> object, String field)
@@ -79,21 +101,37 @@ public final class TakOidcConfig {
         }
     }
 
-    private static List<String> parseScopes(Object value) throws OidcException {
+    /**
+     * The server has emitted scopes both as a JSON array and as one space
+     * delimited string (review round v02, D2). Both shapes normalise to the
+     * same list; an empty list, blank string or any other type is rejected.
+     */
+    static List<String> parseScopes(Object value) throws OidcException {
         if (value == null) {
             return DEFAULT_SCOPES;
         }
-        if (!(value instanceof List<?>)) {
-            throw new OidcException(OidcError.DISCOVERY_FAILED,
-                    "scopes must be an array");
-        }
         List<String> result = new ArrayList<>();
-        for (Object scope : (List<?>) value) {
-            if (!(scope instanceof String) || ((String) scope).isEmpty()) {
-                throw new OidcException(OidcError.DISCOVERY_FAILED,
-                        "scopes must contain strings");
+        if (value instanceof String) {
+            for (String scope : ((String) value).trim().split("\\s+")) {
+                if (!scope.isEmpty()) {
+                    result.add(scope);
+                }
             }
-            result.add((String) scope);
+        } else if (value instanceof List<?>) {
+            for (Object scope : (List<?>) value) {
+                if (!(scope instanceof String) || ((String) scope).trim().isEmpty()) {
+                    throw new OidcException(OidcError.DISCOVERY_FAILED,
+                            "scopes must contain strings");
+                }
+                result.add(((String) scope).trim());
+            }
+        } else {
+            throw new OidcException(OidcError.DISCOVERY_FAILED,
+                    "scopes must be an array or a space delimited string");
+        }
+        if (result.isEmpty()) {
+            throw new OidcException(OidcError.DISCOVERY_FAILED,
+                    "scopes must not be empty");
         }
         return result;
     }

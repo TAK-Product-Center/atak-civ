@@ -219,9 +219,11 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             return;
         }
 
-        AtakCertificateDatabase.deleteCertificateForServerAndPort(
-                AtakCertificateDatabaseIFace.TYPE_CLIENT_CERTIFICATE,
-                ncs.getHost(), ncs.getPort());
+        // F-28 / Astra rank 9: unlike the legacy path, the existing client
+        // certificate for this host and port is NOT deleted here. It stays
+        // installed and working until EnrollCompletionListener has a verified
+        // replacement and saves it over the old one in one write; every
+        // failure path before that leaves the connection as it was.
 
         OidcAuthorizationFlow.Listener listener =
                 new OidcAuthorizationFlow.Listener() {
@@ -268,7 +270,29 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
         CommsMapComponent.EnrollmentListener.ErrorState errorState = fromOidcError(
                 error);
         Log.w(TAG, "OIDC authorization failed: " + errorState);
-        showOidcErrorDialog(errorState);
+        showOidcErrorDialog(errorState, 0);
+    }
+
+    /**
+     * F-24: a redirect arrived but no sign-in attempt was waiting for it
+     * (ATAK was restarted while the browser was up, or the attempt had
+     * expired). Shows the sign-in cancelled dialog with a restart hint so
+     * the return to ATAK is never silent.
+     */
+    public void showOidcRedirectExpired(final Context activityContext) {
+        MapView mapView = MapView.getMapView();
+        if (mapView == null) {
+            Log.d(TAG, "mapview is null, cannot report an expired sign-in");
+            return;
+        }
+        this.view = mapView;
+        this.appCtx = mapView.getContext();
+        this.context = activityContext == null ? mapView.getContext()
+                : activityContext;
+        Log.w(TAG, "OIDC redirect arrived with no attempt waiting");
+        showOidcErrorDialog(
+                CommsMapComponent.EnrollmentListener.ErrorState.BROWSER_CANCELLED,
+                R.string.oidc_err_restart_hint);
     }
 
     private static CommsMapComponent.EnrollmentListener.ErrorState fromOidcError(
@@ -472,31 +496,31 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                             break;
                         }
                         case IDP_UNREACHABLE: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case BROWSER_CANCELLED: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case TOKEN_INVALID: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case GROUP_DENIED: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case TLS_FAILURE: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case SERVER_REJECTED: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                         case DISCOVERY_FAILED: {
-                            showOidcErrorDialog(error);
+                            showOidcErrorDialog(error, 0);
                             return;
                         }
                     }
@@ -972,7 +996,8 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
     }
 
     private void showOidcErrorDialog(
-            final CommsMapComponent.EnrollmentListener.ErrorState error) {
+            final CommsMapComponent.EnrollmentListener.ErrorState error,
+            final int extraHintRes) {
         final int titleRes;
         final int messageRes;
         final int actionRes;
@@ -1026,6 +1051,9 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             public void run() {
                 String message = appCtx.getString(messageRes) + "\n\n"
                         + appCtx.getString(actionRes);
+                if (extraHintRes != 0) {
+                    message = message + "\n\n" + appCtx.getString(extraHintRes);
+                }
                 AlertDialog dialog = new AlertDialog.Builder(context)
                         .setIcon(ATAKConstants.getIconId())
                         .setTitle(titleRes)

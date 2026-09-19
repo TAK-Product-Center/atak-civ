@@ -47,9 +47,10 @@ public class TakHttpResponse implements IResponse {
             Log.d(TAG, "Op: " + _request.getRequestLine() + ", response: "
                     + _statusCode);
         } else {
+            // The reason phrase is peer controlled text; log its length only.
             Log.w(TAG, "Op: " + _request.getRequestLine() + ", response: "
-                    + _statusCode
-                    + ", " + _statusLine.getReasonPhrase());
+                    + _statusCode + ", reason length "
+                    + safeLength(_statusLine.getReasonPhrase()));
         }
     }
 
@@ -87,8 +88,10 @@ public class TakHttpResponse implements IResponse {
 
     public void verify(int status) throws TakHttpException {
         if (!isStatus(status)) {
+            // Status code only: the full response carries peer headers and
+            // reason text that must never reach logcat.
             Log.w(TAG, "HTTP operation: " + _request.getRequestLine()
-                    + " expected: " + status + ", " + _response.toString());
+                    + " expected: " + status + ", got: " + _statusCode);
             String errorMessage = getReasonPhrase();
             if (FileSystemUtils.isEmpty(errorMessage))
                 errorMessage = "HTTP operation failed: " + _statusCode;
@@ -116,9 +119,13 @@ public class TakHttpResponse implements IResponse {
 
             //validate expected contents
             if (!ret.contains(verify)) {
-                Log.w(TAG, "Failed to parse expected response body: " + verify);
+                // Never copy the peer body into a log line or an exception
+                // message (callers log messages): report its length.
+                Log.w(TAG, "Failed to parse expected response body: " + verify
+                        + ", body length " + ret.length());
                 throw new TakHttpException(
-                        "Failed to parse expected response body: " + ret,
+                        "Failed to parse expected response body, length "
+                                + ret.length(),
                         _statusCode);
             }
         }
@@ -147,6 +154,10 @@ public class TakHttpResponse implements IResponse {
 
     public String getReasonPhrase() {
         return _statusLine.getReasonPhrase();
+    }
+
+    private static int safeLength(String value) {
+        return value == null ? 0 : value.length();
     }
 
     public Header getHeader(String name) {

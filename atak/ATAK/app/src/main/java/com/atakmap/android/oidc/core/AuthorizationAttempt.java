@@ -13,8 +13,21 @@ public final class AuthorizationAttempt {
     private final String codeVerifier;
 
     public static AuthorizationAttempt create(String clientId, String redirectUri) {
-        return new AuthorizationAttempt(clientId, redirectUri, randomValue(), randomValue(),
+        return create(clientId, redirectUri, newState());
+    }
+
+    /**
+     * Builds the attempt around a state generated earlier, so the receiver
+     * can be bound to it before it is started (v02, Silas L4).
+     */
+    public static AuthorizationAttempt create(String clientId, String redirectUri,
+            String state) {
+        return new AuthorizationAttempt(clientId, redirectUri, state, randomValue(),
                 Pkce.newVerifier());
+    }
+
+    public static String newState() {
+        return randomValue();
     }
 
     public AuthorizationAttempt(String clientId, String redirectUri, String state,

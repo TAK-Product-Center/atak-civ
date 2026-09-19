@@ -1,6 +1,7 @@
 package com.atakmap.android.oidc.core;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -53,6 +54,7 @@ public final class LoopbackRedirectReceiverTest {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Socket client = null;
         try {
+            receiver.bindState("xyz");
             receiver.start();
             assertNotNull(receiver.getRedirectUri());
             assertTrue(receiver.getBoundAddress().isLoopbackAddress());
@@ -145,6 +147,7 @@ public final class LoopbackRedirectReceiverTest {
         final LoopbackRedirectReceiver receiver = new LoopbackRedirectReceiver();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
+            receiver.bindState("xyz");
             receiver.start();
             final int port = port(receiver.getRedirectUri());
             Future<String> redirect = executor.submit(new Callable<String>() {
@@ -221,6 +224,97 @@ public final class LoopbackRedirectReceiverTest {
                     redirect.get(3, TimeUnit.SECONDS));
             good.close();
         } finally {
+            receiver.close();
+            executor.shutdownNow();
+        }
+    }
+
+    /** v02 (Astra rank 8): an unbound listener answers 404 even to a well formed callback. */
+    @Test
+    public void unboundReceiverRejectsAWellFormedCallback() throws Exception {
+        final LoopbackRedirectReceiver receiver = new LoopbackRedirectReceiver();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            receiver.start();
+            final int port = port(receiver.getRedirectUri());
+            Future<String> redirect = executor.submit(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return receiver.awaitRedirect(3000);
+                }
+            });
+            Socket client = new Socket("127.0.0.1", port);
+            client.getOutputStream().write(("GET /oidc/callback?code=abc&state=xyz HTTP/1.1\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            client.getOutputStream().flush();
+            assertEquals("HTTP/1.1 404 Not Found", new BufferedReader(new InputStreamReader(
+                    client.getInputStream(), StandardCharsets.US_ASCII)).readLine());
+            client.close();
+            assertFalse(redirect.isDone());
+        } finally {
+            receiver.close();
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * v02 (Astra rank 8 probe): a client dripping one byte per 100 ms below
+     * the inactivity timeout must not hold a 500 ms attempt open; the absolute
+     * deadline is enforced inside every read and the port is released.
+     */
+    @Test
+    public void drippedBytesDoNotExtendTheAbsoluteDeadline() throws Exception {
+        final LoopbackRedirectReceiver receiver = new LoopbackRedirectReceiver();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Socket client = null;
+        try {
+            receiver.bindState("expected");
+            receiver.start();
+            final int port = port(receiver.getRedirectUri());
+            final long startedAt = System.nanoTime();
+            Future<String> redirect = executor.submit(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return receiver.awaitRedirect(500);
+                }
+            });
+            client = new Socket("127.0.0.1", port);
+            client.setTcpNoDelay(true);
+            OutputStream output = client.getOutputStream();
+            long elapsedMillis = -1;
+            for (int i = 0; i < 40; i++) {
+                try {
+                    output.write('G');
+                    output.flush();
+                } catch (java.io.IOException closedByReceiver) {
+                    break;
+                }
+                Thread.sleep(100);
+                if (redirect.isDone()) {
+                    break;
+                }
+            }
+            try {
+                redirect.get(1, TimeUnit.SECONDS);
+                fail("deadline must end the wait");
+            } catch (java.util.concurrent.ExecutionException e) {
+                elapsedMillis = (System.nanoTime() - startedAt) / 1000000L;
+                assertTrue(e.getCause() instanceof OidcException);
+                assertEquals(OidcError.BROWSER_CANCELLED, ((OidcException) e.getCause()).getError());
+            }
+            assertTrue("waiter lived " + elapsedMillis + " ms past a 500 ms deadline",
+                    elapsedMillis < 2500);
+            // The listener is closed: the port is no longer accepting.
+            try {
+                new Socket("127.0.0.1", port).close();
+                fail("listener still accepting after the deadline");
+            } catch (java.io.IOException expected) {
+                // connection refused
+            }
+        } finally {
+            if (client != null) {
+                client.close();
+            }
             receiver.close();
             executor.shutdownNow();
         }
