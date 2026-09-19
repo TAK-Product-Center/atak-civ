@@ -62,6 +62,8 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
     private CertificateEnrollmentCompleteCallback certificateEnrollmentCompleteCallback = null;
     protected static final String TAG = "CertificateEnrollmentClient";
     private ProgressDialog progressDialog;
+    /** The OIDC attempt in progress, so a cancelled dialog stops it (F09). */
+    private OidcAuthorizationFlow oidcFlow;
     private Context context;
     private boolean getProfile;
 
@@ -194,6 +196,16 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                 progressDialog.setIcon(ATAKConstants.getIconId());
                 progressDialog.setMessage(
                         appCtx.getString(R.string.oidc_signing_in));
+                progressDialog.setCancelable(true);
+                progressDialog.setOnCancelListener(
+                        new DialogInterface.OnCancelListener() {
+                            @Override
+                            public void onCancel(DialogInterface dialog) {
+                                OidcAuthorizationFlow flow = oidcFlow;
+                                if (flow != null)
+                                    flow.cancel();
+                            }
+                        });
                 progressDialog.show();
             }
         });
@@ -215,6 +227,7 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                 new OidcAuthorizationFlow.Listener() {
             @Override
             public void onAuthorized(String assertion, String identity) {
+                oidcFlow = null;
                 if (FileSystemUtils.isEmpty(assertion)
                         || FileSystemUtils.isEmpty(identity)) {
                     handleOidcFailure(OidcError.TOKEN_INVALID);
@@ -234,13 +247,17 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
 
             @Override
             public void onFailed(OidcError error, String detail) {
+                oidcFlow = null;
                 handleOidcFailure(error);
             }
         };
         try {
-            new OidcAuthorizationFlow(context, ncs.getHost(),
-                    allowAllHostnames).start(listener);
+            OidcAuthorizationFlow flow = new OidcAuthorizationFlow(context,
+                    ncs.getHost(), allowAllHostnames);
+            oidcFlow = flow;
+            flow.start(listener);
         } catch (RuntimeException e) {
+            oidcFlow = null;
             Log.e(TAG, "OIDC authorization failed to start: "
                     + e.getClass().getSimpleName());
             handleOidcFailure(OidcError.SERVER_REJECTED);
@@ -801,6 +818,21 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                 true, false, -1, true, allowAllHostnames);
         final DeviceProfileCallback callback = new DeviceProfileCallback(
                 context) {
+            @Override
+            public void onRequestConnectionError(
+                    com.foxykeep.datadroid.requestmanager.Request request,
+                    com.foxykeep.datadroid.requestmanager.RequestManager.ConnectionError ce) {
+                // F08: the legacy callback treats 403 as "older server, done".
+                // On the bearer path 403 means the server refused the assertion.
+                if (ce != null && ce.getStatusCode() == 403) {
+                    DeviceProfileClient.getInstance()
+                            .callbackReceived(profileRequest, false);
+                    onDeviceProfileRequestComplete(false, null);
+                    return;
+                }
+                super.onRequestConnectionError(request, ce);
+            }
+
             @Override
             public void onDeviceProfileRequestComplete(boolean status,
                     Bundle resultData) {

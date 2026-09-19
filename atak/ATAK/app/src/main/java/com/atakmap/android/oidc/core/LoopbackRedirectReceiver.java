@@ -1,8 +1,7 @@
 package com.atakmap.android.oidc.core;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -12,10 +11,18 @@ import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 
-/** One-shot HTTP receiver bound only to IPv4 loopback. */
+/**
+ * RFC 8252 section 7.3 loopback receiver: one HTTP request line on an
+ * ephemeral 127.0.0.1 port, alive for one attempt only.
+ */
 public final class LoopbackRedirectReceiver implements RedirectReceiver {
 
     public static final String PATH = "/oidc/callback";
+
+    /** Longest request line accepted; anything longer is dropped (T12). */
+    static final int MAX_REQUEST_LINE = 8192;
+    /** Longest a single client may take to send its request line. */
+    private static final long CLIENT_READ_MILLIS = 5000L;
 
     private static final String SUCCESS_BODY =
             "<!doctype html><html><body>You can return to ATAK</body></html>";
@@ -23,7 +30,9 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
 
     private final Object lock = new Object();
     private ServerSocket serverSocket;
+    private Socket client;
     private boolean cancelled;
+    private String expectedState;
 
     public static String redirectUriFor(int port) {
         return "http://127.0.0.1:" + port + PATH;
@@ -53,14 +62,13 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
                         "redirect receiver already started");
             }
             try {
-                InetAddress loopback = InetAddress.getLoopbackAddress();
-                if (loopback.getAddress().length != 4) {
-                    loopback = InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
-                }
+                InetAddress loopback = InetAddress.getByAddress(
+                        new byte[] {127, 0, 0, 1});
                 ServerSocket socket = new ServerSocket();
                 socket.bind(new InetSocketAddress(loopback, 0));
                 serverSocket = socket;
                 cancelled = false;
+                expectedState = null;
             } catch (IOException e) {
                 throw new OidcException(OidcError.BROWSER_CANCELLED,
                         "unable to start redirect receiver", e);
@@ -73,6 +81,13 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
         synchronized (lock) {
             return serverSocket == null ? null
                     : redirectUriFor(serverSocket.getLocalPort());
+        }
+    }
+
+    @Override
+    public void bindState(String state) {
+        synchronized (lock) {
+            expectedState = state;
         }
     }
 
@@ -93,47 +108,53 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
         }
 
         /*
-         * T12: a stray or hostile local connection that is not the callback
-         * (wrong path, wrong method) gets a 404 and the listener keeps waiting.
-         * Closing the port on a bad request would free it for another process
-         * to bind before the browser delivers the real redirect.
+         * T12: a stray or hostile local connection (wrong path, wrong method,
+         * wrong state, oversized line, silent client) gets a reply or is dropped
+         * and the listener keeps waiting. Closing the port on a bad request
+         * would free it for another process to bind before the browser delivers
+         * the real redirect. One absolute deadline covers every connection.
          */
         long deadline = System.nanoTime() + Math.max(0, timeoutMillis) * 1000000L;
         try {
             while (true) {
                 long remaining = (deadline - System.nanoTime()) / 1000000L;
-                if (remaining <= 0) {
+                if (remaining <= 0 || isCancelled()) {
                     throw cancelled();
                 }
                 socket.setSoTimeout(timeout(remaining));
-                Socket client = null;
+                Socket accepted = null;
                 try {
-                    client = socket.accept();
-                    if (!client.getInetAddress().isLoopbackAddress()) {
+                    accepted = socket.accept();
+                    synchronized (lock) {
+                        client = accepted;
+                    }
+                    if (!accepted.getInetAddress().isLoopbackAddress()) {
                         continue;
                     }
-                    client.setSoTimeout(timeout(Math.min(remaining, 5000L)));
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(
-                            client.getInputStream(), StandardCharsets.US_ASCII));
-                    String redirect = requestLineToUri(reader.readLine(),
-                            socket.getLocalPort());
-                    writeResponse(client.getOutputStream(), redirect != null);
-                    if (redirect != null) {
+                    accepted.setSoTimeout(timeout(Math.min(remaining, CLIENT_READ_MILLIS)));
+                    String line = readRequestLine(accepted.getInputStream());
+                    String redirect = requestLineToUri(line, socket.getLocalPort());
+                    boolean accept = redirect != null
+                            && stateMatches(redirect);
+                    writeResponse(accepted.getOutputStream(), accept);
+                    if (accept) {
                         return redirect;
                     }
                 } catch (SocketTimeoutException e) {
-                    if (client == null) {
+                    if (accepted == null) {
                         throw cancelled();
                     }
                     // A slow or silent client: drop it and keep listening.
-                } finally {
-                    if (client != null) {
-                        try {
-                            client.close();
-                        } catch (IOException ignored) {
-                            // The response is already complete.
-                        }
+                } catch (IOException e) {
+                    if (accepted == null) {
+                        throw e;
                     }
+                    // A broken client connection: drop it and keep listening.
+                } finally {
+                    synchronized (lock) {
+                        client = null;
+                    }
+                    closeQuietly(accepted);
                 }
             }
         } catch (SocketException e) {
@@ -144,6 +165,43 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
         } finally {
             closeSocket(socket);
         }
+    }
+
+    private boolean stateMatches(String redirect) {
+        String expected;
+        synchronized (lock) {
+            expected = expectedState;
+        }
+        return RedirectMatch.stateMatches(redirect, expected);
+    }
+
+    private boolean isCancelled() {
+        synchronized (lock) {
+            return cancelled;
+        }
+    }
+
+    /** Reads one CRLF or LF terminated line of at most MAX_REQUEST_LINE bytes. */
+    private static String readRequestLine(InputStream in) throws IOException {
+        byte[] buffer = new byte[MAX_REQUEST_LINE];
+        int n = 0;
+        while (true) {
+            int b = in.read();
+            if (b < 0) {
+                return null;
+            }
+            if (b == '\n') {
+                break;
+            }
+            if (n == buffer.length) {
+                return null;
+            }
+            buffer[n++] = (byte) b;
+        }
+        if (n > 0 && buffer[n - 1] == '\r') {
+            n--;
+        }
+        return new String(buffer, 0, n, StandardCharsets.US_ASCII);
     }
 
     private static int timeout(long timeoutMillis) {
@@ -173,16 +231,29 @@ public final class LoopbackRedirectReceiver implements RedirectReceiver {
 
     @Override
     public void cancel() {
+        Socket current;
         synchronized (lock) {
             cancelled = true;
+            current = client;
+            client = null;
             closeSocket(serverSocket);
         }
+        // Also interrupt a read in progress on an accepted connection.
+        closeQuietly(current);
     }
 
     @Override
     public void close() {
-        synchronized (lock) {
-            closeSocket(serverSocket);
+        cancel();
+    }
+
+    private static void closeQuietly(Socket socket) {
+        if (socket != null) {
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+                // Best effort.
+            }
         }
     }
 

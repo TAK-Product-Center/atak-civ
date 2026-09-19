@@ -53,14 +53,15 @@ public final class RedirectResponse {
         String error = values.get("error");
         if (error != null) {
             if ("access_denied".equals(error) || "login_required".equals(error)
-                    || "user_cancelled".equals(error) || "user_canceled".equals(error)
-                    || "user_cancel".equals(error)
-                    || "cancelled".equals(error)) {
+                    || "interaction_required".equals(error)
+                    || "consent_required".equals(error)) {
                 throw new OidcException(OidcError.BROWSER_CANCELLED,
                         "authorization cancelled");
             }
+            // Fixed vocabulary only: the raw error value is never copied into a
+            // message, so a value that echoes state or code cannot leak through it.
             throw new OidcException(OidcError.TOKEN_INVALID,
-                    "authorization error: " + safeErrorCode(error));
+                    "authorization error: " + errorCategory(error));
         }
 
         String code = values.get("code");
@@ -71,18 +72,19 @@ public final class RedirectResponse {
         return code;
     }
 
-    private static String safeErrorCode(String error) {
-        StringBuilder safe = new StringBuilder();
-        int limit = Math.min(error.length(), 80);
-        for (int i = 0; i < limit; i++) {
-            char c = error.charAt(i);
-            if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
-                    || c >= '0' && c <= '9' || c == '_' || c == '-') {
-                safe.append(c);
-            } else {
-                safe.append('?');
+    private static final String[] KNOWN_ERRORS = {
+            "invalid_request", "unauthorized_client", "unsupported_response_type",
+            "invalid_scope", "server_error", "temporarily_unavailable",
+            "invalid_request_uri", "invalid_request_object", "request_not_supported",
+            "request_uri_not_supported", "registration_not_supported",
+            "account_selection_required" };
+
+    static String errorCategory(String error) {
+        for (String known : KNOWN_ERRORS) {
+            if (known.equals(error)) {
+                return known;
             }
         }
-        return safe.toString();
+        return "unknown";
     }
 }

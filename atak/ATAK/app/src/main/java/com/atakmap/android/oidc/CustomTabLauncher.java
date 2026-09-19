@@ -49,6 +49,13 @@ final class CustomTabLauncher {
         }
     }
 
+    /**
+     * F03 (T13): a Custom Tab is opened only inside the browser the user has
+     * chosen as default for https links, and only when that browser offers
+     * the Custom Tabs service. Any other package that merely declares the
+     * service is never selected; without a qualifying default browser the
+     * plain ACTION_VIEW intent goes through the normal system resolution.
+     */
     private static String chooseProvider(PackageManager packageManager,
             List<ResolveInfo> providers) {
         if (providers == null || providers.isEmpty())
@@ -56,25 +63,21 @@ final class CustomTabLauncher {
 
         Intent viewIntent = new Intent(Intent.ACTION_VIEW,
                 Uri.parse("https://example.com"));
+        viewIntent.addCategory(Intent.CATEGORY_BROWSABLE);
         ResolveInfo defaultBrowser = packageManager.resolveActivity(viewIntent,
-                0);
-        String defaultPackage = defaultBrowser != null
-                && defaultBrowser.activityInfo != null
-                        ? defaultBrowser.activityInfo.packageName
-                        : null;
+                PackageManager.MATCH_DEFAULT_ONLY);
+        if (defaultBrowser == null || defaultBrowser.activityInfo == null)
+            return null;
+        String defaultPackage = defaultBrowser.activityInfo.packageName;
+        if (defaultPackage == null || "android".equals(defaultPackage))
+            return null;
 
-        String firstProvider = null;
         for (ResolveInfo provider : providers) {
             if (provider == null || provider.serviceInfo == null)
                 continue;
-            String packageName = provider.serviceInfo.packageName;
-            if (packageName == null)
-                continue;
-            if (firstProvider == null)
-                firstProvider = packageName;
-            if (packageName.equals(defaultPackage))
-                return packageName;
+            if (defaultPackage.equals(provider.serviceInfo.packageName))
+                return defaultPackage;
         }
-        return firstProvider;
+        return null;
     }
 }

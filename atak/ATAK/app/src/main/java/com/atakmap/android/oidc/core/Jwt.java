@@ -1,7 +1,6 @@
 package com.atakmap.android.oidc.core;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.Map;
 
 /** Minimal JWT shape and unverified-claim helpers. */
@@ -23,7 +22,7 @@ public final class Jwt {
                 return false;
             }
             try {
-                Base64.getUrlDecoder().decode(segment);
+                Base64Url.decode(segment);
             } catch (IllegalArgumentException e) {
                 return false;
             }
@@ -51,7 +50,7 @@ public final class Jwt {
         }
         try {
             String[] segments = jwt.split("\\.", -1);
-            byte[] payload = Base64.getUrlDecoder().decode(segments[1]);
+            byte[] payload = Base64Url.decode(segments[1]);
             return MiniJson.parseObject(new String(payload, StandardCharsets.UTF_8));
         } catch (IllegalArgumentException | OidcException e) {
             throw invalidToken("JWT claims are invalid", e);

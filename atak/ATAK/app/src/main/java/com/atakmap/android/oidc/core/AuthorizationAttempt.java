@@ -1,7 +1,6 @@
 package com.atakmap.android.oidc.core;
 
 import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.List;
 
 /** In-memory values for one authorization-code attempt. */
@@ -36,7 +35,7 @@ public final class AuthorizationAttempt {
     private static String randomValue() {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        return Base64Url.encode(bytes);
     }
 
     public String getClientId() {

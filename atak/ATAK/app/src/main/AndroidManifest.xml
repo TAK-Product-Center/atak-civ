@@ -246,6 +246,7 @@
             android:name="com.atakmap.android.oidc.OidcRedirectActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:taskAffinity=""
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">

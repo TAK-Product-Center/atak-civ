@@ -209,6 +209,10 @@ public class DeviceProfileOperation extends HTTPOperation {
             httpget = new HttpGet(baseUrl + path);
 
             if (b != null) {
+                // F05: never let the client follow a redirect with the bearer.
+                httpget.getParams().setBooleanParameter(
+                        org.apache.http.client.params.ClientPNames.HANDLE_REDIRECTS,
+                        false);
                 httpget.addHeader("Authorization", "Bearer " + b);
             }
 

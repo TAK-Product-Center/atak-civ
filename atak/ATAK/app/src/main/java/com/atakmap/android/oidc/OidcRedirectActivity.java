@@ -28,8 +28,11 @@ public class OidcRedirectActivity extends Activity {
     private void handleRedirect() {
         Intent intent = getIntent();
         Uri uri = intent == null ? null : intent.getData();
+        // Exactly scheme:/oidc/callback?query: no authority, no fragment.
         if (uri == null || !REDIRECT_SCHEME.equals(uri.getScheme())
-                || !REDIRECT_PATH.equals(uri.getPath())) {
+                || !REDIRECT_PATH.equals(uri.getPath())
+                || uri.getEncodedAuthority() != null
+                || uri.getEncodedFragment() != null) {
             finish();
             return;
         }

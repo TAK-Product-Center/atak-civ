@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.Assert.fail;
 import org.junit.Test;
 
 public final class LoopbackRedirectReceiverTest {
@@ -171,6 +172,87 @@ public final class LoopbackRedirectReceiverTest {
             assertEquals("http://127.0.0.1:" + port + "/oidc/callback?code=abc&state=xyz",
                     redirect.get(3, TimeUnit.SECONDS));
             client.close();
+        } finally {
+            receiver.close();
+            executor.shutdownNow();
+        }
+    }
+
+    /** T12 (F01, F02): wrong state and an oversized line are ignored; the real redirect still lands. */
+    @Test
+    public void boundStateIgnoresWrongStateAndOversizedLines() throws Exception {
+        final LoopbackRedirectReceiver receiver = new LoopbackRedirectReceiver();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            receiver.start();
+            receiver.bindState("expected");
+            final int port = port(receiver.getRedirectUri());
+            Future<String> redirect = executor.submit(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return receiver.awaitRedirect(6000);
+                }
+            });
+            Socket wrong = new Socket("127.0.0.1", port);
+            wrong.getOutputStream().write(("GET /oidc/callback?code=evil&state=wrong HTTP/1.1\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            wrong.getOutputStream().flush();
+            assertEquals("HTTP/1.1 404 Not Found", new BufferedReader(new InputStreamReader(
+                    wrong.getInputStream(), StandardCharsets.US_ASCII)).readLine());
+            wrong.close();
+
+            Socket huge = new Socket("127.0.0.1", port);
+            byte[] filler = new byte[LoopbackRedirectReceiver.MAX_REQUEST_LINE + 10];
+            java.util.Arrays.fill(filler, (byte) 'a');
+            huge.getOutputStream().write("GET /oidc/callback?state=".getBytes(StandardCharsets.US_ASCII));
+            huge.getOutputStream().write(filler);
+            huge.getOutputStream().flush();
+            assertEquals("HTTP/1.1 404 Not Found", new BufferedReader(new InputStreamReader(
+                    huge.getInputStream(), StandardCharsets.US_ASCII)).readLine());
+            huge.close();
+
+            Socket good = new Socket("127.0.0.1", port);
+            good.getOutputStream().write(("GET /oidc/callback?code=abc&state=expected HTTP/1.1\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            good.getOutputStream().flush();
+            assertEquals("HTTP/1.1 200 OK", new BufferedReader(new InputStreamReader(
+                    good.getInputStream(), StandardCharsets.US_ASCII)).readLine());
+            assertEquals("http://127.0.0.1:" + port + "/oidc/callback?code=abc&state=expected",
+                    redirect.get(3, TimeUnit.SECONDS));
+            good.close();
+        } finally {
+            receiver.close();
+            executor.shutdownNow();
+        }
+    }
+
+    /** F02: cancel() interrupts a client that connected and then went silent. */
+    @Test
+    public void cancelClosesASilentAcceptedClient() throws Exception {
+        final LoopbackRedirectReceiver receiver = new LoopbackRedirectReceiver();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            receiver.start();
+            final int port = port(receiver.getRedirectUri());
+            Future<String> redirect = executor.submit(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return receiver.awaitRedirect(60000);
+                }
+            });
+            Socket silent = new Socket("127.0.0.1", port);
+            silent.getOutputStream().write("GET /oidc".getBytes(StandardCharsets.US_ASCII));
+            silent.getOutputStream().flush();
+            Thread.sleep(200);
+            receiver.cancel();
+            try {
+                redirect.get(3, TimeUnit.SECONDS);
+                fail("cancel must end the wait");
+            } catch (java.util.concurrent.ExecutionException e) {
+                assertTrue(e.getCause() instanceof OidcException);
+                assertEquals(OidcError.BROWSER_CANCELLED, ((OidcException) e.getCause()).getError());
+            }
+            silent.close();
         } finally {
             receiver.close();
             executor.shutdownNow();

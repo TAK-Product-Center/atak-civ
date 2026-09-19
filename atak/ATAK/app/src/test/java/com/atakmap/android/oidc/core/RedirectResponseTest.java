@@ -3,6 +3,7 @@ package com.atakmap.android.oidc.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
+import static org.junit.Assert.fail;
 import org.junit.Test;
 
 public final class RedirectResponseTest {
@@ -90,5 +91,18 @@ public final class RedirectResponseTest {
             return expected;
         }
         throw new AssertionError("redirect was accepted");
+    }
+
+    /** F06: an unknown error value (which could echo the state) never reaches the message. */
+    @Test
+    public void unknownErrorValueIsNotCopiedIntoTheMessage() {
+        try {
+            RedirectResponse.extractCode(
+                    "com.atakmap.app.civ:/oidc/callback?error=expected&state=expected", "expected");
+            fail("must reject");
+        } catch (OidcException e) {
+            assertEquals(OidcError.TOKEN_INVALID, e.getError());
+            assertEquals("authorization error: unknown", e.getMessage());
+        }
     }
 }

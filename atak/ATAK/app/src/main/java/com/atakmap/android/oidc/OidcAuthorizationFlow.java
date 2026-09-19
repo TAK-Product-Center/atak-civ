@@ -25,12 +25,15 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.conn.ssl.SSLSocketFactory;
 import org.apache.http.entity.StringEntity;
+import org.apache.http.client.params.ClientPNames;
+import org.apache.http.client.methods.HttpRequestBase;
 
 import java.io.IOException;
 import java.net.URI;
 import java.security.cert.CertPathValidatorException;
 import java.security.cert.CertificateException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -63,7 +66,15 @@ public class OidcAuthorizationFlow {
 
     private final Context context;
     private final String takHost;
-    private final boolean allowAllHostnames;
+    /**
+     * Quick connect (the connection dialog's "use trust" box unchecked):
+     * public CAs plus hostname verification, exactly the trust the existing
+     * enrollment and profile paths use for the same request. Otherwise the
+     * tactical policy: only the trust configured for this server, no hostname
+     * check (CertificateManager "allowAllHostnames"). F07.
+     */
+    private final boolean quickConnect;
+    private boolean finished;
     private final Handler mainHandler;
     private final Object stateLock = new Object();
 
@@ -75,7 +86,7 @@ public class OidcAuthorizationFlow {
     private String assertion;
 
     public OidcAuthorizationFlow(Context context, String takHost,
-            boolean allowAllHostnames) {
+            boolean quickConnect) {
         if (context == null)
             throw new IllegalArgumentException("context is required");
         if (takHost == null || takHost.trim().isEmpty())
@@ -85,7 +96,7 @@ public class OidcAuthorizationFlow {
         this.context = applicationContext == null ? context
                 : applicationContext;
         this.takHost = takHost;
-        this.allowAllHostnames = allowAllHostnames;
+        this.quickConnect = quickConnect;
         this.mainHandler = new Handler(Looper.getMainLooper());
     }
 
@@ -99,6 +110,7 @@ public class OidcAuthorizationFlow {
                 throw new IllegalStateException(
                         "OIDC authorization is already running");
             cancelled = false;
+            finished = false;
             thread = new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -133,7 +145,7 @@ public class OidcAuthorizationFlow {
                     + SslNetCotPort.getServerApiPath(
                             SslNetCotPort.Type.CERT_ENROLLMENT);
             takClient = newHttpClient(enrollmentBaseUrl,
-                    allowAllHostnames, OidcError.TLS_FAILURE);
+                    !quickConnect, OidcError.TLS_FAILURE);
 
             TakOidcConfig config = discover(takClient,
                     takOrigin + DISCOVERY_PATH);
@@ -147,6 +159,8 @@ public class OidcAuthorizationFlow {
 
             attempt = AuthorizationAttempt.create(config.getAndroidClientId(),
                     currentReceiver.getRedirectUri());
+            // T12: only a redirect carrying this attempt's state is accepted.
+            currentReceiver.bindState(attempt.getState());
             String authorizationUrl = attempt.buildAuthorizationUrl(
                     config.getAuthorizationEndpoint(), config.getScopes());
             launchBrowser(authorizationUrl);
@@ -166,12 +180,19 @@ public class OidcAuthorizationFlow {
             attempt = null;
 
             String identity = fetchIdentity(takClient, assertion);
-            checkCancelled();
+            // F09: success and cancellation are arbitrated under the lock so a
+            // cancel that lands here cannot be followed by onAuthorized.
+            if (!finish()) {
+                throw new OidcException(OidcError.BROWSER_CANCELLED,
+                        "authorization cancelled");
+            }
             listener.onAuthorized(assertion, identity);
         } catch (OidcException e) {
+            finish();
             logStep("failed", e.getError().name());
             listener.onFailed(e.getError(), safeDetail(e));
         } catch (RuntimeException e) {
+            finish();
             OidcError error = isTlsFailure(e) ? OidcError.TLS_FAILURE
                     : OidcError.SERVER_REJECTED;
             logStep("failed", error.name());
@@ -198,9 +219,30 @@ public class OidcAuthorizationFlow {
         }
     }
 
+    /** Marks the flow finished; false when it was cancelled first. */
+    private boolean finish() {
+        synchronized (stateLock) {
+            if (cancelled || finished)
+                return false;
+            finished = true;
+            return true;
+        }
+    }
+
+    /**
+     * F05: the Apache client follows redirects and copies explicit headers
+     * (the bearer) onto the redirected request. Every sensitive request is
+     * pinned to its origin: any 3xx is an error, never followed.
+     */
+    private static void noRedirects(HttpRequestBase request) {
+        request.getParams().setBooleanParameter(
+                ClientPNames.HANDLE_REDIRECTS, false);
+    }
+
     private TakOidcConfig discover(TakHttpClient client, String url)
             throws OidcException {
         HttpGet request = new HttpGet(url);
+        noRedirects(request);
         request.setHeader("Accept", "application/json");
         TakHttpResponse response = null;
         try {
@@ -237,6 +279,7 @@ public class OidcAuthorizationFlow {
             client = newHttpClient(idpBaseUrl, false, OidcError.TLS_FAILURE);
 
             HttpPost request = new HttpPost(tokenEndpoint);
+            noRedirects(request);
             request.setHeader("Accept", "application/json");
             request.setHeader("Content-Type",
                     "application/x-www-form-urlencoded");
@@ -272,6 +315,7 @@ public class OidcAuthorizationFlow {
     private String fetchIdentity(TakHttpClient client, String bearerAssertion)
             throws OidcException {
         HttpGet request = new HttpGet(client.getUrl(TLS_CONFIG_PATH));
+        noRedirects(request);
         request.setHeader("Authorization", "Bearer " + bearerAssertion);
         request.setHeader("Accept", "application/xml");
         TakHttpResponse response = null;
@@ -339,7 +383,9 @@ public class OidcAuthorizationFlow {
                     "browser launch failed");
 
         try {
-            launched.await();
+            if (!launched.await(30, TimeUnit.SECONDS))
+                throw new OidcException(OidcError.BROWSER_CANCELLED,
+                        "browser launch timed out");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new OidcException(OidcError.BROWSER_CANCELLED,

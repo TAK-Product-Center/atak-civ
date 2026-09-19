@@ -15,15 +15,25 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
 
     private boolean started;
     private boolean cancelled;
+    private String expectedState;
     private String deliveredUri;
 
+    /**
+     * Called by the redirect activity. Returns false when no attempt is
+     * waiting, when the URI is not this receiver's redirect, or when the
+     * state does not match the bound attempt (T12: ignored, the attempt
+     * keeps waiting for the real redirect).
+     */
     public static boolean deliver(String redirectUri) {
-        if (redirectUri == null) {
+        if (redirectUri == null || !redirectUri.startsWith(REDIRECT_URI)) {
             return false;
         }
         synchronized (MAILBOX_LOCK) {
             if (waiting == null || !waiting.started || waiting.cancelled
                     || waiting.deliveredUri != null) {
+                return false;
+            }
+            if (!RedirectMatch.stateMatches(redirectUri, waiting.expectedState)) {
                 return false;
             }
             waiting.deliveredUri = redirectUri;
@@ -42,6 +52,7 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
                         "another redirect attempt is active");
             }
             deliveredUri = null;
+            expectedState = null;
             cancelled = false;
             started = true;
             waiting = this;
@@ -51,6 +62,13 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
     @Override
     public String getRedirectUri() {
         return REDIRECT_URI;
+    }
+
+    @Override
+    public void bindState(String state) {
+        synchronized (MAILBOX_LOCK) {
+            expectedState = state;
+        }
     }
 
     @Override
@@ -66,12 +84,14 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
                     clearWaiting();
                     throw browserCancelled();
                 }
-                long elapsedNanos = System.nanoTime() - startedAt;
-                long elapsedMillis = elapsedNanos / 1000000L;
+                long elapsedMillis = (System.nanoTime() - startedAt) / 1000000L;
                 remaining = Math.max(0, timeoutMillis - elapsedMillis);
             }
-            if (deliveredUri != null) {
-                return deliveredUri;
+            if (deliveredUri != null && !cancelled) {
+                // Consume: a second await never returns the same redirect.
+                String uri = deliveredUri;
+                deliveredUri = null;
+                return uri;
             }
             clearWaiting();
             throw browserCancelled();
@@ -82,6 +102,7 @@ public final class SchemeRedirectRendezvous implements RedirectReceiver {
     public void cancel() {
         synchronized (MAILBOX_LOCK) {
             cancelled = true;
+            deliveredUri = null;
             clearWaiting();
             MAILBOX_LOCK.notifyAll();
         }

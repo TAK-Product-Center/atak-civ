@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.util.Base64;
 
 /** Proof Key for Code Exchange, RFC 7636, S256 only. */
 public final class Pkce {
@@ -15,7 +14,7 @@ public final class Pkce {
     public static String newVerifier() {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        return Base64Url.encode(bytes);
     }
 
     public static String challengeS256(String verifier) {
@@ -26,7 +25,7 @@ public final class Pkce {
         try {
             MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
             byte[] digest = sha256.digest(verifier.getBytes(StandardCharsets.US_ASCII));
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+            return Base64Url.encode(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
