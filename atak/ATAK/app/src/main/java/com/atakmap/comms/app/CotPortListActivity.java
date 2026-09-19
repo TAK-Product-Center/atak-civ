@@ -319,6 +319,8 @@ public abstract class CotPortListActivity extends MetricActivity {
         editNetInfoIntent.putExtra("description", cotPort.getDescription());
         editNetInfoIntent.putExtra("compress", cotPort.isCompressed());
         editNetInfoIntent.putExtra("useAuth", cotPort.isUsingAuth());
+        editNetInfoIntent.putExtra(TAKServer.AUTH_METHOD_KEY,
+                cotPort.getAuthMethod());
         editNetInfoIntent.putExtra("username", cotPort.getUsername());
         editNetInfoIntent.putExtra("password", cotPort.getPassword());
         editNetInfoIntent.putExtra("cacheCreds", cotPort.getCacheCredentials());
@@ -493,12 +495,20 @@ public abstract class CotPortListActivity extends MetricActivity {
         }
         String newServer = newNcs.getHost();
 
+        String description = inputData.getString(TAKServer.DESCRIPTION_KEY);
+        Long expiration = inputData.getLong(TAKServer.EXPIRATION_KEY);
+
+        if (new TAKServer(inputData).isOidc()) {
+            CertificateEnrollmentClient.getInstance().enrollWithOidc(this,
+                    description, connectString, expiration, null, true,
+                    !enrollUseTrust);
+            return;
+        }
+
         // Enroll new credentials
         String username = inputData.getString(TAKServer.USERNAME_KEY);
         String password = inputData.getString(TAKServer.PASSWORD_KEY);
         String cacheCreds = inputData.getString(TAKServer.CACHECREDS_KEY);
-        String description = inputData.getString(TAKServer.DESCRIPTION_KEY);
-        Long expiration = inputData.getLong(TAKServer.EXPIRATION_KEY);
 
         if (creds == null
                 || !FileSystemUtils.isEquals(username, creds.username)

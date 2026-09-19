@@ -92,6 +92,34 @@
                     style="@style/darkButton"/>
             </LinearLayout>
 
+            <RadioGroup
+                android:id="@+id/auth_method_group"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="@dimen/auto_margin"
+                    android:text="@string/auth_method_label"
+                    android:textColor="#FFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold"/>
+                <RadioButton
+                    android:id="@+id/auth_method_legacy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="@string/auth_method_legacy"/>
+                <RadioButton
+                    android:id="@+id/auth_method_oidc"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/auto_margin"
+                    android:text="@string/auth_method_oidc"/>
+            </RadioGroup>
+
             <TableLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

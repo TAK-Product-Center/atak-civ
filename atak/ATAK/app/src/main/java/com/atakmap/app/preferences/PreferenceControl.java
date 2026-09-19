@@ -544,6 +544,11 @@ public class PreferenceControl implements ConnectionListener {
                     String strUseAuth = mapping.get("useAuth" + j);
                     boolean useAuth = strUseAuth != null && Boolean
                             .parseBoolean(strUseAuth);
+                    String authMethod = mapping
+                            .get(TAKServer.AUTH_METHOD_KEY + j);
+                    if (FileSystemUtils.isEmpty(authMethod)) {
+                        authMethod = "legacy";
+                    }
                     String strCompress = mapping.get("compress" + j);
                     boolean compress = strCompress != null && Boolean
                             .parseBoolean(strCompress);
@@ -579,6 +584,7 @@ public class PreferenceControl implements ConnectionListener {
                     data.putString("description", description);
                     data.putBoolean("enabled", enabled);
                     data.putBoolean("useAuth", useAuth);
+                    data.putString(TAKServer.AUTH_METHOD_KEY, authMethod);
                     data.putBoolean("compress", compress);
                     data.putString("cacheCreds", cacheCreds);
 

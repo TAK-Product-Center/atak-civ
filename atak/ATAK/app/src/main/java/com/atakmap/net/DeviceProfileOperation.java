@@ -87,6 +87,9 @@ public class DeviceProfileOperation extends HTTPOperation {
             throws ConnectionException {
 
         TakHttpClient httpClient = null;
+        HttpGet httpget = null;
+        String b = null;
+        boolean bearerRequest = false;
         try {
             // Get request data
             DeviceProfileRequest profileRequest = (DeviceProfileRequest) request
@@ -94,6 +97,16 @@ public class DeviceProfileOperation extends HTTPOperation {
                             DeviceProfileOperation.PARAM_PROFILE_REQUEST);
             if (profileRequest == null) {
                 throw new DataException("Unable to serialize profile request");
+            }
+
+            bearerRequest = profileRequest.hasBearerRef();
+            if (bearerRequest) {
+                b = OidcBearerVault.take(profileRequest.getBearerRef());
+                if (b == null) {
+                    throw new ConnectionException(
+                            "Bearer assertion is no longer available",
+                            HttpStatus.SC_UNAUTHORIZED);
+                }
             }
 
             String path;
@@ -193,7 +206,11 @@ public class DeviceProfileOperation extends HTTPOperation {
                         NetConnectString.fromString(
                                 profileRequest.getServerConnectString()));
             }
-            HttpGet httpget = new HttpGet(baseUrl + path);
+            httpget = new HttpGet(baseUrl + path);
+
+            if (b != null) {
+                httpget.addHeader("Authorization", "Bearer " + b);
+            }
 
             if (profileRequest.hasIfModifiedSince()) {
                 //Note, TAK Server only returns files which have been modified since this date. If
@@ -208,7 +225,14 @@ public class DeviceProfileOperation extends HTTPOperation {
             Log.d(TAG, "Getting profile: " + httpget.getRequestLine());
 
             TakHttpResponse response;
-            if (credentials != null) {
+            if (b != null) {
+                try {
+                    response = httpClient.execute(httpget, false);
+                } finally {
+                    httpget.removeHeaders("Authorization");
+                    b = null;
+                }
+            } else if (credentials != null) {
                 response = httpClient.execute(httpget, credentials);
             } else {
                 response = httpClient.execute(httpget);
@@ -243,21 +267,50 @@ public class DeviceProfileOperation extends HTTPOperation {
                     response.getStatusCode());
             return output;
         } catch (TakHttpException e) {
-            Log.e(TAG, "DeviceProfileRequest failed", e);
-            throw new ConnectionException(e.getMessage(), e.getStatusCode());
+            if (bearerRequest) {
+                Log.e(TAG, "OIDC profile request failed: "
+                        + e.getClass().getSimpleName());
+                throw new ConnectionException("Profile request failed",
+                        e.getStatusCode());
+            } else {
+                Log.e(TAG, "DeviceProfileRequest failed", e);
+                throw new ConnectionException(e.getMessage(),
+                        e.getStatusCode());
+            }
         } catch (ConnectionException e) {
-            Log.e(TAG, "DeviceProfileRequest failed2", e);
+            if (bearerRequest) {
+                Log.e(TAG, "OIDC profile request failed: "
+                        + e.getClass().getSimpleName());
+            } else {
+                Log.e(TAG, "DeviceProfileRequest failed2", e);
+            }
             throw e;
         } catch (Exception e) {
-            Log.e(TAG, "DeviceProfileRequest failed3", e);
-            throw new ConnectionException(e.getMessage(),
-                    NetworkOperation.STATUSCODE_UNKNOWN);
+            if (bearerRequest) {
+                Log.e(TAG, "OIDC profile request failed: "
+                        + e.getClass().getSimpleName());
+                throw new ConnectionException("Profile request failed",
+                        NetworkOperation.STATUSCODE_UNKNOWN);
+            } else {
+                Log.e(TAG, "DeviceProfileRequest failed3", e);
+                throw new ConnectionException(e.getMessage(),
+                        NetworkOperation.STATUSCODE_UNKNOWN);
+            }
         } finally {
+            if (httpget != null) {
+                httpget.removeHeaders("Authorization");
+            }
+            b = null;
             try {
                 if (httpClient != null)
                     httpClient.shutdown();
             } catch (Exception e) {
-                Log.d(TAG, "Failed to shutdown the client", e);
+                if (bearerRequest) {
+                    Log.d(TAG, "Failed to shutdown the OIDC profile client: "
+                            + e.getClass().getSimpleName());
+                } else {
+                    Log.d(TAG, "Failed to shutdown the client", e);
+                }
             }
         }
     }
