@@ -14,7 +14,7 @@ import com.atakmap.android.oidc.core.OidcError;
 import com.atakmap.android.util.ATAKConstants;
 import com.atakmap.android.util.ATAKUtilities;
 import com.atakmap.android.util.NotificationUtil;
-import com.atakmap.android.util.ResourceUtil;
+import com.atakmap.app.system.ResourceUtil;
 import gov.tak.platform.lang.Parsers;
 import com.atakmap.app.R;
 import com.atakmap.comms.CommsMapComponent;
