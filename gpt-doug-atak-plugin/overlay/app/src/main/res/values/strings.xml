@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GPT-Doug GeoAtlas</string>
+    <string name="app_desc">Civilian synthetic geospatial viewer with offline reference data</string>
+    <string name="atlas_heading">GPT-Doug / GeoAtlas</string>
+    <string name="atlas_status">Synthetic example only · No TAK Server, GPS or live intelligence connected</string>
+    <string name="atlas_sources">Companion GPT-Doug TAK-GEO supports local GeoJSON and CoT imports, provider metadata and optional USGS imagery after explicit consent. This Android plugin includes an offline synthetic example; it does not automatically download map tiles.</string>
+    <string name="atlas_limitations">This screen is an illustrative 2D schematic, not an ATAK basemap, navigation aid, operational picture, field tracker or safety instrument. Production use requires authorized build, signing, testing and deployment review.</string>
+</resources>

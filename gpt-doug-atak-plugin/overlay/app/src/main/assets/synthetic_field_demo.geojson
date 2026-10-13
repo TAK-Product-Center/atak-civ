@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "sample-a",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.438,
+          37.541
+        ]
+      },
+      "properties": {
+        "name": "Synthetic survey A",
+        "source_kind": "SYNTHETIC"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "sample-b",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.43,
+          37.545
+        ]
+      },
+      "properties": {
+        "name": "Synthetic survey B",
+        "source_kind": "SYNTHETIC"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "sample-c",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.435,
+          37.536
+        ]
+      },
+      "properties": {
+        "name": "Synthetic survey C",
+        "source_kind": "SYNTHETIC"
+      }
+    }
+  ]
+}

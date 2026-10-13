@@ -1,0 +1,67 @@
+name: GPT-Doug ATAK Third Party Source Preflight
+
+on:
+  pull_request:
+    paths:
+      - 'gpt-doug-atak-plugin/**'
+      - '.github/workflows/gpt-doug-atak-pipeline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'gpt-doug-atak-plugin/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Source ZIP + static TPC requirements
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - name: Checkout the public ATAK-CIV fork (no proprietary SDK fetch)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate Python source syntax
+        run: |
+          python -m compileall -q gpt-doug-atak-plugin/tools gpt-doug-atak-plugin/tests
+      - name: Verify deterministic, credential-free source archive
+        run: |
+          python -m unittest discover -s gpt-doug-atak-plugin/tests -p 'test_*.py' -v
+      - name: Prepare single-root TAK source archive
+        run: |
+          python gpt-doug-atak-plugin/tools/build_archive.py --output gpt-doug-atak-plugin/dist/GPTDougGeoAtlas.zip --force
+          python gpt-doug-atak-plugin/tools/preflight_archive.py gpt-doug-atak-plugin/dist/GPTDougGeoAtlas.zip --json-out gpt-doug-atak-plugin/dist/preflight.json
+      - name: Double-check release signing is not claimed
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          status=json.loads(Path('gpt-doug-atak-plugin/dist/preflight.json').read_text())
+          assert status["ok"]
+          assert status["compiled"] is False
+          assert status["signed"] is False
+          assert status["TAK_submission"] == "NOT_SUBMITTED"
+          print('Validated source only. Authenticated TPC compilation/signing must be done separately.')
+          PY
+      - name: Upload non-secret source archive for manual TPC review
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpt-doug-geoatlas-tak-thirdparty-source
+          path: |
+            gpt-doug-atak-plugin/dist/GPTDougGeoAtlas.zip
+            gpt-doug-atak-plugin/dist/preflight.json
+          if-no-files-found: error
+          retention-days: 14
