@@ -61,6 +61,12 @@ public class DeviceProfileRequest implements Parcelable {
     private final String password;
 
     /**
+     * Opaque one-shot reference to an in-memory bearer. The bearer itself is
+     * never stored in this Parcelable.
+     */
+    private final String bearerRef;
+
+    /**
      * Request enrollment profile
      */
     private final boolean onEnrollment;
@@ -112,11 +118,21 @@ public class DeviceProfileRequest implements Parcelable {
             String username, String password,
             boolean onEnrollment, boolean onConnect, long syncSecago,
             boolean autoImportProfile, boolean allowAllHostnames) {
+        this(server, serverConnectString, username, password, null,
+                onEnrollment, onConnect, syncSecago, autoImportProfile,
+                allowAllHostnames);
+    }
+
+    public DeviceProfileRequest(String server, String serverConnectString,
+            String username, String password, String bearerRef,
+            boolean onEnrollment, boolean onConnect, long syncSecago,
+            boolean autoImportProfile, boolean allowAllHostnames) {
         this.id = UUID.randomUUID().toString();
         this.server = server;
         this.serverConnectString = serverConnectString;
         this.username = username;
         this.password = password;
+        this.bearerRef = bearerRef;
         this.onEnrollment = onEnrollment;
         this.onConnect = onConnect;
         this.syncSecago = syncSecago;
@@ -161,6 +177,7 @@ public class DeviceProfileRequest implements Parcelable {
         this.serverConnectString = serverConnectString;
         this.username = username;
         this.password = password;
+        this.bearerRef = null;
         this.onEnrollment = false;
         this.onConnect = false;
         this.syncSecago = syncSecago;
@@ -194,6 +211,14 @@ public class DeviceProfileRequest implements Parcelable {
 
     public String getPassword() {
         return password;
+    }
+
+    public String getBearerRef() {
+        return bearerRef;
+    }
+
+    public boolean hasBearerRef() {
+        return !FileSystemUtils.isEmpty(bearerRef);
     }
 
     public boolean hasCredentials() {
@@ -323,6 +348,7 @@ public class DeviceProfileRequest implements Parcelable {
             dest.writeString(serverConnectString);
             dest.writeString(username);
             dest.writeString(password);
+            dest.writeString(bearerRef);
             dest.writeByte((byte) (onEnrollment ? 1 : 0));
             dest.writeByte((byte) (onConnect ? 1 : 0));
             dest.writeByte((byte) (autoImportProfile ? 1 : 0));
@@ -364,6 +390,7 @@ public class DeviceProfileRequest implements Parcelable {
         serverConnectString = in.readString();
         username = in.readString();
         password = in.readString();
+        bearerRef = in.readString();
         onEnrollment = in.readByte() != 0;
         onConnect = in.readByte() != 0;
         autoImportProfile = in.readByte() != 0;

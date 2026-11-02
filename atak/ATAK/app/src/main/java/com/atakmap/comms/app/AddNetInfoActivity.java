@@ -15,6 +15,7 @@ import android.widget.CompoundButton.OnCheckedChangeListener;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.Spinner;
 import android.widget.TextView;
 
@@ -153,6 +154,28 @@ public class AddNetInfoActivity extends MetricActivity {
         });
     }
 
+    private static void updateAuthenticationMethodViews(boolean oidc,
+            CheckBox useAuthBox, View usernameBlock, View passwordBlock,
+            Spinner spinnerCacheCreds, EditText username, EditText password,
+            CheckBox enrollKeystoreBox) {
+        boolean showCredentials = useAuthBox.isChecked() && !oidc;
+        int visibility = showCredentials ? View.VISIBLE : View.GONE;
+        usernameBlock.setVisibility(visibility);
+        passwordBlock.setVisibility(visibility);
+        spinnerCacheCreds.setVisibility(visibility);
+
+        username.setEnabled(showCredentials);
+        password.setEnabled(showCredentials);
+        spinnerCacheCreds.setEnabled(showCredentials);
+
+        if (oidc) {
+            enrollKeystoreBox.setChecked(true);
+            enrollKeystoreBox.setEnabled(false);
+        } else {
+            enrollKeystoreBox.setEnabled(true);
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(null);
@@ -183,6 +206,18 @@ public class AddNetInfoActivity extends MetricActivity {
         final View passwordBlock = findViewById(R.id.password_block);
         final Spinner spinnerCacheCreds = findViewById(
                 R.id.spinnerCacheCreds);
+        final RadioGroup authMethodGroup = findViewById(
+                R.id.auth_method_group);
+        final RadioButton authMethodLegacy = findViewById(
+                R.id.auth_method_legacy);
+        final RadioButton authMethodOidc = findViewById(
+                R.id.auth_method_oidc);
+        final CheckBox enrollKeystoreBox = findViewById(
+                R.id.enroll_keystore_cb);
+        final CheckBox enrollUseTrustBox = findViewById(
+                R.id.enroll_usetrust_cb);
+        final TextView enrollUseTrustText = findViewById(
+                R.id.enroll_usetrust_detail_tv);
 
         final LinearLayout truststoreLayout = findViewById(
                 R.id.truststore_layout);
@@ -288,6 +323,12 @@ public class AddNetInfoActivity extends MetricActivity {
         boolean useAuthFlag = extras.getBoolean("useAuth",
                 false);
         useAuthBox.setChecked(useAuthFlag);
+        String authMethod = extras.getString(TAKServer.AUTH_METHOD_KEY);
+        if ("oidc".equals(authMethod)) {
+            authMethodOidc.setChecked(true);
+        } else {
+            authMethodLegacy.setChecked(true);
+        }
         if (useAuthFlag) {
             String usernameStr = extras.getString("username");
             if (usernameStr != null) {
@@ -462,12 +503,6 @@ public class AddNetInfoActivity extends MetricActivity {
             }
         });
 
-        final CheckBox enrollKeystoreBox = findViewById(
-                R.id.enroll_keystore_cb);
-        final CheckBox enrollUseTrustBox = findViewById(
-                R.id.enroll_usetrust_cb);
-        final TextView enrollUseTrustText = findViewById(
-                R.id.enroll_usetrust_detail_tv);
         enrollKeystoreBox.setChecked(doEnrollment);
         enrollUseTrustBox.setEnabled(doEnrollment);
         enrollUseTrustText.setEnabled(doEnrollment);
@@ -483,21 +518,35 @@ public class AddNetInfoActivity extends MetricActivity {
                     }
                 });
 
+        authMethodGroup.setOnCheckedChangeListener(
+                new RadioGroup.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(RadioGroup group,
+                            int checkedId) {
+                        updateAuthenticationMethodViews(
+                                checkedId == R.id.auth_method_oidc,
+                                useAuthBox, usernameBlock, passwordBlock,
+                                spinnerCacheCreds, username, password,
+                                enrollKeystoreBox);
+                    }
+                });
+
         useAuthBox
                 .setOnCheckedChangeListener(new OnCheckedChangeListener() {
                     @Override
                     public void onCheckedChanged(CompoundButton cb,
                             boolean checked) {
-                        int vis = checked ? View.VISIBLE : View.GONE;
-                        usernameBlock.setVisibility(vis);
-                        passwordBlock.setVisibility(vis);
-                        spinnerCacheCreds.setVisibility(vis);
-
-                        username.setEnabled(checked);
-                        password.setEnabled(checked);
-                        spinnerCacheCreds.setEnabled(checked);
+                        updateAuthenticationMethodViews(
+                                authMethodOidc.isChecked(), useAuthBox,
+                                usernameBlock, passwordBlock,
+                                spinnerCacheCreds, username, password,
+                                enrollKeystoreBox);
                     }
                 });
+
+        updateAuthenticationMethodViews(authMethodOidc.isChecked(),
+                useAuthBox, usernameBlock, passwordBlock, spinnerCacheCreds,
+                username, password, enrollKeystoreBox);
 
         useDefaultCertsCheckbox
                 .setOnCheckedChangeListener(new OnCheckedChangeListener() {
@@ -559,8 +608,12 @@ public class AddNetInfoActivity extends MetricActivity {
                         data.putBoolean("enrollUseTrust",
                                 enrollUseTrustBox.isChecked());
                         data.putBoolean("compress", compressBox.isChecked());
-                        data.putBoolean("useAuth", useAuthBox.isChecked());
-                        if (useAuthBox.isChecked()) {
+                        boolean oidc = authMethodOidc.isChecked();
+                        data.putString(TAKServer.AUTH_METHOD_KEY,
+                                oidc ? "oidc" : "legacy");
+                        data.putBoolean("useAuth",
+                                !oidc && useAuthBox.isChecked());
+                        if (oidc || useAuthBox.isChecked()) {
                             if (!(getProto().equals(
                                     CotServiceRemote.Proto.ssl.toString()) ||
                                     getProto()
@@ -570,7 +623,9 @@ public class AddNetInfoActivity extends MetricActivity {
                                 showErrorDialog(message);
                                 return;
                             }
+                        }
 
+                        if (!oidc && useAuthBox.isChecked()) {
                             data.putString("username", username
                                     .getEditableText().toString().trim());
                             data.putString("password", password
