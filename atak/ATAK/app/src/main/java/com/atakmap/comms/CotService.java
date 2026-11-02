@@ -820,6 +820,9 @@ public class CotService implements OnSharedPreferenceChangeListener,
             boolean isEnabled = prefs.getBoolean("enabled" + i, true);
             boolean isCompressed = prefs.getBoolean("compress" + i, false);
             boolean useAuth = prefs.getBoolean("useAuth" + i, false);
+            String authMethod = prefs.getString(
+                    com.atakmap.comms.TAKServer.AUTH_METHOD_KEY + i,
+                    "legacy");
             boolean enrollForCertificateWithTrust = prefs.getBoolean(
                     "enrollForCertificateWithTrust" + i, false);
             boolean enrollUseTrust = prefs.getBoolean(
@@ -841,6 +844,8 @@ public class CotService implements OnSharedPreferenceChangeListener,
             input.putBoolean("compress", isCompressed);
             input.putBoolean("connected", false);
             input.putBoolean("useAuth", useAuth);
+            input.putString(com.atakmap.comms.TAKServer.AUTH_METHOD_KEY,
+                    authMethod);
             input.putBoolean("enrollForCertificateWithTrust",
                     enrollForCertificateWithTrust);
             input.putBoolean("enrollUseTrust",
@@ -953,6 +958,8 @@ public class CotService implements OnSharedPreferenceChangeListener,
             boolean isCompressed = !props.getProperty("compress", "0")
                     .equals("0");
             boolean useAuth = !props.getProperty("useAuth", "0").equals("0");
+            String authMethod = props.getProperty(
+                    com.atakmap.comms.TAKServer.AUTH_METHOD_KEY, "legacy");
             boolean enrollForCertificateWithTrust = !props.getProperty(
                     "enrollForCertificateWithTrust", "0").equals("0");
             boolean enrollUseTrust = !props.getProperty(
@@ -964,6 +971,8 @@ public class CotService implements OnSharedPreferenceChangeListener,
             input.putBoolean("compress", isCompressed);
             input.putBoolean("connected", false);
             input.putBoolean("useAuth", useAuth);
+            input.putString(com.atakmap.comms.TAKServer.AUTH_METHOD_KEY,
+                    authMethod);
             input.putBoolean("enrollForCertificateWithTrust",
                     enrollForCertificateWithTrust);
             input.putBoolean("enrollUseTrust", enrollUseTrust);
@@ -1059,6 +1068,10 @@ public class CotService implements OnSharedPreferenceChangeListener,
 
             boolean useAuth = data.getBoolean("useAuth", false);
             props.setProperty("useAuth", useAuth ? "1" : "0");
+            String authMethod = data.getString(
+                    com.atakmap.comms.TAKServer.AUTH_METHOD_KEY);
+            props.setProperty(com.atakmap.comms.TAKServer.AUTH_METHOD_KEY,
+                    authMethod == null ? "legacy" : authMethod);
 
             String cacheCreds = data.getString("cacheCreds");
             if (!FileSystemUtils.isEmpty(cacheCreds)) {

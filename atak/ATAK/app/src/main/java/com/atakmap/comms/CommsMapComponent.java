@@ -252,7 +252,28 @@ public class CommsMapComponent extends AbstractMapComponent implements
             /**
              * All other non-specific errors
              */
-            OTHER
+            OTHER,
+
+            /** The identity provider could not be reached. */
+            IDP_UNREACHABLE,
+
+            /** The browser sign-in was cancelled before completion. */
+            BROWSER_CANCELLED,
+
+            /** The sign-in response was invalid or expired. */
+            TOKEN_INVALID,
+
+            /** The signed-in account is not permitted on the TAK Server. */
+            GROUP_DENIED,
+
+            /** A secure connection could not be verified. */
+            TLS_FAILURE,
+
+            /** The TAK Server rejected the sign-in proof. */
+            SERVER_REJECTED,
+
+            /** The TAK Server did not provide usable SSO settings. */
+            DISCOVERY_FAILED
         }
     }
 

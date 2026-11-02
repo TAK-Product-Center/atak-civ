@@ -27,6 +27,7 @@ public class TAKServer {
     public static final String SERVER_VERSION_KEY = "serverVersion";
     public static final String SERVER_API_KEY = "serverAPI";
     public static final String USEAUTH_KEY = "useAuth";
+    public static final String AUTH_METHOD_KEY = "authMethod";
     public static final String USERNAME_KEY = "username";
     public static final String ENROLL_FOR_CERT_KEY = "enrollForCertificateWithTrust";
     public static final String ENROLL_USE_TRUST_KEY = "enrollUseTrust";
@@ -126,6 +127,15 @@ public class TAKServer {
 
     public boolean isUsingAuth() {
         return this.data.getBoolean(USEAUTH_KEY, false);
+    }
+
+    public String getAuthMethod() {
+        String authMethod = this.data.getString(AUTH_METHOD_KEY);
+        return authMethod == null ? "legacy" : authMethod;
+    }
+
+    public boolean isOidc() {
+        return "oidc".equals(getAuthMethod());
     }
 
     public boolean enrollForCert() {

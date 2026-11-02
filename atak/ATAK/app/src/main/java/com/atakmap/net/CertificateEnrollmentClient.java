@@ -7,10 +7,14 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.os.Bundle;
 
+import com.atakmap.android.http.rest.HTTPRequestManager;
 import com.atakmap.android.maps.MapView;
+import com.atakmap.android.oidc.OidcAuthorizationFlow;
+import com.atakmap.android.oidc.core.OidcError;
 import com.atakmap.android.util.ATAKConstants;
 import com.atakmap.android.util.ATAKUtilities;
 import com.atakmap.android.util.NotificationUtil;
+import com.atakmap.app.system.ResourceUtil;
 import gov.tak.platform.lang.Parsers;
 import com.atakmap.app.R;
 import com.atakmap.comms.CommsMapComponent;
@@ -26,6 +30,8 @@ import com.atakmap.coremap.log.Log;
 import java.io.ByteArrayOutputStream;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
 
@@ -56,11 +62,15 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
     private CertificateEnrollmentCompleteCallback certificateEnrollmentCompleteCallback = null;
     protected static final String TAG = "CertificateEnrollmentClient";
     private ProgressDialog progressDialog;
+    /** The OIDC attempt in progress, so a cancelled dialog stops it (F09). */
+    private OidcAuthorizationFlow oidcFlow;
     private Context context;
     private boolean getProfile;
 
     private MapView view;
     private Context appCtx;
+    private final ConcurrentHashMap<String, DeviceProfileCallback> oidcProfileCallbacks =
+            new ConcurrentHashMap<>();
 
     public void enroll(final Context context, final String desc,
             final String connectString, final String cacheCreds,
@@ -161,6 +171,143 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
         }
     }
 
+    public void enrollWithOidc(final Context context, final String desc,
+            final String connectString, final Long expiration,
+            CertificateEnrollmentCompleteCallback certificateEnrollmentCompleteCallback,
+            final boolean getProfile, final boolean allowAllHostnames) {
+        this.context = context;
+        this.getProfile = getProfile;
+        this.certificateEnrollmentCompleteCallback = certificateEnrollmentCompleteCallback;
+
+        this.view = MapView.getMapView();
+        if (view == null) {
+            Log.d(TAG, "mapview is null, cannot enroll");
+            return;
+        }
+
+        this.appCtx = view.getContext();
+
+        view.post(new Runnable() {
+            @Override
+            public void run() {
+                progressDialog = new ProgressDialog(context);
+                progressDialog.setTitle(
+                        appCtx.getString(R.string.enroll_client_title));
+                progressDialog.setIcon(ATAKConstants.getIconId());
+                progressDialog.setMessage(
+                        appCtx.getString(R.string.oidc_signing_in));
+                progressDialog.setCancelable(true);
+                progressDialog.setOnCancelListener(
+                        new DialogInterface.OnCancelListener() {
+                            @Override
+                            public void onCancel(DialogInterface dialog) {
+                                OidcAuthorizationFlow flow = oidcFlow;
+                                if (flow != null)
+                                    flow.cancel();
+                            }
+                        });
+                progressDialog.show();
+            }
+        });
+
+        final NetConnectString ncs = NetConnectString
+                .fromString(connectString);
+        if (ncs == null) {
+            Log.e(TAG, "could not enroll for a bad connectString: "
+                    + connectString, new Exception());
+            handleOidcFailure(OidcError.DISCOVERY_FAILED);
+            return;
+        }
+
+        // F-28 / Astra rank 9: unlike the legacy path, the existing client
+        // certificate for this host and port is NOT deleted here. It stays
+        // installed and working until EnrollCompletionListener has a verified
+        // replacement and saves it over the old one in one write; every
+        // failure path before that leaves the connection as it was.
+
+        OidcAuthorizationFlow.Listener listener =
+                new OidcAuthorizationFlow.Listener() {
+            @Override
+            public void onAuthorized(String assertion, String identity) {
+                oidcFlow = null;
+                if (FileSystemUtils.isEmpty(assertion)
+                        || FileSystemUtils.isEmpty(identity)) {
+                    handleOidcFailure(OidcError.TOKEN_INVALID);
+                    return;
+                }
+
+                String cacheCreds = ResourceUtil.getString(appCtx,
+                        R.string.cache_creds_do_not, Locale.US);
+                CertificateConfigRequest request = new CertificateConfigRequest(
+                        connectString, cacheCreds, desc, identity, null,
+                        expiration);
+                request.setBearerToken(assertion);
+                request.setIdentity(identity);
+                request.setQuickConnect(allowAllHostnames);
+                verifyTrust(request);
+            }
+
+            @Override
+            public void onFailed(OidcError error, String detail) {
+                oidcFlow = null;
+                handleOidcFailure(error);
+            }
+        };
+        try {
+            OidcAuthorizationFlow flow = new OidcAuthorizationFlow(context,
+                    ncs.getHost(), allowAllHostnames);
+            oidcFlow = flow;
+            flow.start(listener);
+        } catch (RuntimeException e) {
+            oidcFlow = null;
+            Log.e(TAG, "OIDC authorization failed to start: "
+                    + e.getClass().getSimpleName());
+            handleOidcFailure(OidcError.SERVER_REJECTED);
+        }
+    }
+
+    private void handleOidcFailure(OidcError error) {
+        CommsMapComponent.EnrollmentListener.ErrorState errorState = fromOidcError(
+                error);
+        Log.w(TAG, "OIDC authorization failed: " + errorState);
+        showOidcErrorDialog(errorState, 0);
+    }
+
+    /**
+     * F-24: a redirect arrived but no sign-in attempt was waiting for it
+     * (ATAK was restarted while the browser was up, or the attempt had
+     * expired). Shows the sign-in cancelled dialog with a restart hint so
+     * the return to ATAK is never silent.
+     */
+    public void showOidcRedirectExpired(final Context activityContext) {
+        MapView mapView = MapView.getMapView();
+        if (mapView == null) {
+            Log.d(TAG, "mapview is null, cannot report an expired sign-in");
+            return;
+        }
+        this.view = mapView;
+        this.appCtx = mapView.getContext();
+        this.context = activityContext == null ? mapView.getContext()
+                : activityContext;
+        Log.w(TAG, "OIDC redirect arrived with no attempt waiting");
+        showOidcErrorDialog(
+                CommsMapComponent.EnrollmentListener.ErrorState.BROWSER_CANCELLED,
+                R.string.oidc_err_restart_hint);
+    }
+
+    private static CommsMapComponent.EnrollmentListener.ErrorState fromOidcError(
+            OidcError error) {
+        if (error == null) {
+            return CommsMapComponent.EnrollmentListener.ErrorState.OTHER;
+        }
+        try {
+            return CommsMapComponent.EnrollmentListener.ErrorState
+                    .valueOf(error.name());
+        } catch (IllegalArgumentException ignored) {
+            return CommsMapComponent.EnrollmentListener.ErrorState.OTHER;
+        }
+    }
+
 
     private class CredentialsCallback implements CredentialsDialog.Callback {
         private boolean isQuickConnect;
@@ -203,7 +350,14 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             execute(request);
 
         } catch (Exception e) {
-            Log.e(TAG, "Exception in post!", e);
+            request.clearBearerToken();
+            if (!FileSystemUtils.isEmpty(request.getIdentity())) {
+                Log.e(TAG, "Exception in OIDC enrollment: "
+                        + e.getClass().getSimpleName());
+                handleOidcFailure(OidcError.SERVER_REJECTED);
+            } else {
+                Log.e(TAG, "Exception in post!", e);
+            }
         }
     }
 
@@ -215,6 +369,7 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
         private final boolean getProfile;
 
         private byte[] privKeyStore;
+        private String bearerRef;
 
         public EnrollCompletionListener(CertificateConfigRequest request,
                 String clientPass,
@@ -226,8 +381,26 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             this.getProfile = getProfile;
         }
 
+        public synchronized void setBearerRef(String bearerRef) {
+            this.bearerRef = bearerRef;
+        }
+
+        private synchronized String releaseBearerRef() {
+            String ref = bearerRef;
+            bearerRef = null;
+            return ref;
+        }
+
+        private void clearBearerRef() {
+            String ref = releaseBearerRef();
+            if (ref != null) {
+                OidcBearerVault.take(ref);
+            }
+        }
+
         @Override
         public void onEnrollmentErrored(final ErrorState error) {
+            clearBearerRef();
             view.post(new Runnable() {
                 public void run() {
                     String message = null;
@@ -322,6 +495,34 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                             // requestForAlert intentionally remains null
                             break;
                         }
+                        case IDP_UNREACHABLE: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case BROWSER_CANCELLED: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case TOKEN_INVALID: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case GROUP_DENIED: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case TLS_FAILURE: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case SERVER_REJECTED: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
+                        case DISCOVERY_FAILED: {
+                            showOidcErrorDialog(error, 0);
+                            return;
+                        }
                     }
 
                     NotificationUtil.getInstance().postNotification(
@@ -361,6 +562,7 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             }
 
             if (fatalError != null) {
+                clearBearerRef();
                 showProgress(false);
                 final String fFatalError = fatalError;
                 view.post(new Runnable() {
@@ -428,9 +630,12 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             CertificateManager.invalidate(request.getServer());
 
             if (getProfile) {
+                String profileBearerRef = releaseBearerRef();
                 CertificateEnrollmentClient.getInstance()
-                        .executeDeviceProfileRequest(request);
+                        .executeDeviceProfileRequest(request,
+                                profileBearerRef);
             } else {
+                clearBearerRef();
                 //
                 // reconnect streams only if we're not about to retrieve an enrollment profile.
                 // the reconnect will trigger a query for a connection profile, so we'll delay
@@ -468,6 +673,9 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
 
     private void execute(CertificateConfigRequest request) {
         if (request == null || !request.isValid()) {
+            if (request != null) {
+                request.clearBearerToken();
+            }
             Log.w(TAG, "Invalid CertificateConfigRequest!");
             return;
         }
@@ -504,7 +712,8 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             truststorePassword = truststoreCreds.password;
         }
 
-        CommsMapComponent.EnrollmentListener listener = new EnrollCompletionListener(
+        final boolean bearerEnrollment = request.hasBearerToken();
+        EnrollCompletionListener listener = new EnrollCompletionListener(
                 request, keystorePassword, truststorePassword, getProfile);
         try {
             // Prior implementation of this used TakHttpClient which ignores all system certs, so
@@ -549,20 +758,52 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             trustStore.store(baos, caCertsPass.toCharArray());
             byte[] caCerts = baos.toByteArray();
-            CommsMapComponent.getInstance().enroll(listener,
-                    request.getServer(),
-                    SslNetCotPort.getServerApiPort(
-                            SslNetCotPort.Type.CERT_ENROLLMENT),
-                    request.getQuickConnect(),
-                    request.getUsername(),
-                    request.getPassword(),
-                    false,
-                    caCerts,
-                    caCertsPass,
-                    keystorePassword,
-                    truststorePassword);
+            if (bearerEnrollment) {
+                if (getProfile) {
+                    // Create the one-shot profile handle before clearing the
+                    // request bearer after commo has copied it.
+                    listener.setBearerRef(
+                            OidcBearerVault.put(request.getBearerToken()));
+                }
+                try {
+                    CommsMapComponent.getInstance().enroll(listener,
+                            request.getServer(),
+                            SslNetCotPort.getServerApiPort(
+                                    SslNetCotPort.Type.CERT_ENROLLMENT),
+                            request.getQuickConnect(),
+                            request.getIdentity(),
+                            request.getBearerToken(),
+                            true,
+                            caCerts,
+                            caCertsPass,
+                            keystorePassword,
+                            truststorePassword);
+                } finally {
+                    request.clearBearerToken();
+                }
+            } else {
+                CommsMapComponent.getInstance().enroll(listener,
+                        request.getServer(),
+                        SslNetCotPort.getServerApiPort(
+                                SslNetCotPort.Type.CERT_ENROLLMENT),
+                        request.getQuickConnect(),
+                        request.getUsername(),
+                        request.getPassword(),
+                        false,
+                        caCerts,
+                        caCertsPass,
+                        keystorePassword,
+                        truststorePassword);
+            }
         } catch (Exception ex) {
-            Log.e(TAG, "Enrollment failed to start", ex);
+            request.clearBearerToken();
+            listener.clearBearerRef();
+            if (bearerEnrollment) {
+                Log.e(TAG, "OIDC enrollment failed to start: "
+                        + ex.getClass().getSimpleName());
+            } else {
+                Log.e(TAG, "Enrollment failed to start", ex);
+            }
             listener.onEnrollmentErrored(
                     CommsMapComponent.EnrollmentListener.ErrorState.OTHER);
         }
@@ -570,17 +811,109 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
     }
 
     private void executeDeviceProfileRequest(
-            final CertificateConfigRequest request) {
+            final CertificateConfigRequest request,
+            final String bearerRef) {
         if (request == null || !request.isValid()) {
+            OidcBearerVault.take(bearerRef);
             Log.w(TAG, "Invalid CertificateConfigRequest!");
             showProgress(false);
             return;
         }
 
-        executeDeviceProfileRequestImpl(request.getServer(),
-                request.getConnectString(),
-                request.getUsername(),
-                request.getPassword(), !request.getQuickConnect());
+        if (!FileSystemUtils.isEmpty(bearerRef)) {
+            executeDeviceProfileRequestImplWithBearer(request.getServer(),
+                    request.getConnectString(), bearerRef,
+                    !request.getQuickConnect());
+        } else {
+            executeDeviceProfileRequestImpl(request.getServer(),
+                    request.getConnectString(),
+                    request.getUsername(),
+                    request.getPassword(), !request.getQuickConnect());
+        }
+    }
+
+    private void executeDeviceProfileRequestImplWithBearer(
+            final String server, final String serverConnectString,
+            final String bearerRef, final boolean allowAllHostnames) {
+        Log.d(TAG, "retrieving enrollment profile");
+
+        final DeviceProfileRequest profileRequest = new DeviceProfileRequest(
+                server, serverConnectString, null, null, bearerRef,
+                true, false, -1, true, allowAllHostnames);
+        final DeviceProfileCallback callback = new DeviceProfileCallback(
+                context) {
+            @Override
+            public void onRequestConnectionError(
+                    com.foxykeep.datadroid.requestmanager.Request request,
+                    com.foxykeep.datadroid.requestmanager.RequestManager.ConnectionError ce) {
+                // F08: the legacy callback treats 403 as "older server, done".
+                // On the bearer path 403 means the server refused the assertion.
+                if (ce != null && ce.getStatusCode() == 403) {
+                    DeviceProfileClient.getInstance()
+                            .callbackReceived(profileRequest, false);
+                    onDeviceProfileRequestComplete(false, null);
+                    return;
+                }
+                super.onRequestConnectionError(request, ce);
+            }
+
+            @Override
+            public void onDeviceProfileRequestComplete(boolean status,
+                    Bundle resultData) {
+                oidcProfileCallbacks.remove(profileRequest.getId());
+                OidcBearerVault.take(bearerRef);
+                Log.d(TAG,
+                        "onDeviceProfileRequestComplete finished successfully: "
+                                + server);
+
+                showProgress(false);
+                if (status) {
+                    showAlertDialog(
+                            appCtx.getString(
+                                    R.string.enroll_client_success),
+                            CertificateEnrollmentStatus.SUCCESS, null);
+                } else {
+                    showAlertDialog(
+                            appCtx.getString(
+                                    R.string.device_profile_failure),
+                            CertificateEnrollmentStatus.ERROR, null);
+                }
+            }
+        };
+
+        boolean sent = false;
+        try {
+            oidcProfileCallbacks.put(profileRequest.getId(), callback);
+            HTTPRequestManager.from(context).execute(
+                    profileRequest.createDeviceProfileRequest(), callback);
+            sent = true;
+        } catch (Exception e) {
+            Log.e(TAG, "Enrollment profile request failed to start: "
+                    + e.getClass().getSimpleName());
+        }
+
+        if (!sent) {
+            oidcProfileCallbacks.remove(profileRequest.getId());
+            OidcBearerVault.take(bearerRef);
+            Log.d(TAG, "getProfile not sent: " + server);
+            view.post(new Runnable() {
+                @Override
+                public void run() {
+                    CommsMapComponent cmc = CommsMapComponent.getInstance();
+                    if (cmc != null) {
+                        CotService cs = cmc.getCotService();
+                        if (cs != null)
+                            cs.reconnectStreams();
+                    }
+                    showProgress(false);
+                    showAlertDialog(
+                            appCtx.getString(R.string.enroll_client_success),
+                            CertificateEnrollmentStatus.SUCCESS, null);
+                }
+            });
+        } else {
+            showProgress(false);
+        }
     }
 
     private void executeDeviceProfileRequestImpl(
@@ -657,6 +990,92 @@ public class CertificateEnrollmentClient implements EnrollmentDialog.Callback {
                     }
                 } catch (Exception ex) {
                     Log.e(TAG, ex.getMessage());
+                }
+            }
+        });
+    }
+
+    private void showOidcErrorDialog(
+            final CommsMapComponent.EnrollmentListener.ErrorState error,
+            final int extraHintRes) {
+        final int titleRes;
+        final int messageRes;
+        final int actionRes;
+        switch (error) {
+            case IDP_UNREACHABLE:
+                titleRes = R.string.oidc_err_idp_unreachable_title;
+                messageRes = R.string.oidc_err_idp_unreachable_msg;
+                actionRes = R.string.oidc_err_idp_unreachable_action;
+                break;
+            case BROWSER_CANCELLED:
+                titleRes = R.string.oidc_err_browser_cancelled_title;
+                messageRes = R.string.oidc_err_browser_cancelled_msg;
+                actionRes = R.string.oidc_err_browser_cancelled_action;
+                break;
+            case TOKEN_INVALID:
+                titleRes = R.string.oidc_err_token_invalid_title;
+                messageRes = R.string.oidc_err_token_invalid_msg;
+                actionRes = R.string.oidc_err_token_invalid_action;
+                break;
+            case GROUP_DENIED:
+                titleRes = R.string.oidc_err_group_denied_title;
+                messageRes = R.string.oidc_err_group_denied_msg;
+                actionRes = R.string.oidc_err_group_denied_action;
+                break;
+            case TLS_FAILURE:
+                titleRes = R.string.oidc_err_tls_failure_title;
+                messageRes = R.string.oidc_err_tls_failure_msg;
+                actionRes = R.string.oidc_err_tls_failure_action;
+                break;
+            case SERVER_REJECTED:
+                titleRes = R.string.oidc_err_server_rejected_title;
+                messageRes = R.string.oidc_err_server_rejected_msg;
+                actionRes = R.string.oidc_err_server_rejected_action;
+                break;
+            case DISCOVERY_FAILED:
+                titleRes = R.string.oidc_err_discovery_failed_title;
+                messageRes = R.string.oidc_err_discovery_failed_msg;
+                actionRes = R.string.oidc_err_discovery_failed_action;
+                break;
+            default:
+                showProgress(false);
+                showAlertDialog(
+                        appCtx.getString(R.string.enroll_client_failure),
+                        CertificateEnrollmentStatus.ERROR, null);
+                return;
+        }
+
+        showProgress(false);
+        view.post(new Runnable() {
+            @Override
+            public void run() {
+                String message = appCtx.getString(messageRes) + "\n\n"
+                        + appCtx.getString(actionRes);
+                if (extraHintRes != 0) {
+                    message = message + "\n\n" + appCtx.getString(extraHintRes);
+                }
+                AlertDialog dialog = new AlertDialog.Builder(context)
+                        .setIcon(ATAKConstants.getIconId())
+                        .setTitle(titleRes)
+                        .setMessage(message)
+                        .setPositiveButton(R.string.ok,
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog,
+                                            int which) {
+                                        if (certificateEnrollmentCompleteCallback != null) {
+                                            certificateEnrollmentCompleteCallback
+                                                    .onCertificateEnrollmentComplete(
+                                                            CertificateEnrollmentStatus.ERROR);
+                                        }
+                                    }
+                                })
+                        .create();
+                try {
+                    dialog.show();
+                } catch (Exception e) {
+                    Log.e(TAG, "Unable to show sign-in error: "
+                            + e.getClass().getSimpleName());
                 }
             }
         });

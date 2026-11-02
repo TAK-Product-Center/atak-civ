@@ -242,6 +242,22 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name="com.atakmap.android.oidc.OidcRedirectActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.atakmap.app.civ" />
+            </intent-filter>
+        </activity>
+
         <activity-alias
             android:targetActivity=".ATAKActivity"
             android:name=".ATAKActivityMil"
@@ -445,6 +461,21 @@
 
 
     <!-- Needed on Some devices to launch external viewers -->
+    <!-- OIDC sign-in (F-23): with targetSdk 30 and later, package visibility
+         hides the default https browser and its Custom Tabs service unless
+         they are declared here. Without these, CustomTabLauncher never finds
+         a provider and always falls back to a plain ACTION_VIEW. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />

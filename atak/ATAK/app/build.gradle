@@ -451,7 +451,9 @@ dependencies {
      } else {
          debugApi("gov.tak.kernel:takkernel-aar:${takKernelVersion}:debug@aar") { transitive = true }
          sdkApi("gov.tak.kernel:takkernel-aar:${takKernelVersion}:debug@aar") { transitive = true }
-         odkApi("gov.tak.kernel:takkernel-aar:${takKernelVersion}:release@aar") { transitive = true }
+         // `odk` is not a declared buildType in this tree (buildTypes are release, debug, sdk),
+         // so `odkApi` does not exist and the upstream line below fails configuration.
+         // odkApi("gov.tak.kernel:takkernel-aar:${takKernelVersion}:release@aar") { transitive = true }
          releaseApi("gov.tak.kernel:takkernel-aar:${takKernelVersion}:release@aar") { transitive = true }
      }
 }

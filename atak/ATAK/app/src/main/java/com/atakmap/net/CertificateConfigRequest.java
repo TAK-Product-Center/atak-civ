@@ -19,6 +19,8 @@ public class CertificateConfigRequest implements Parcelable {
     private final String description;
     private final String username;
     private final String password;
+    private transient String bearerToken;
+    private String identity;
     private boolean hasTruststore;
     private boolean quickConnect;
     private Long expiration;
@@ -77,6 +79,30 @@ public class CertificateConfigRequest implements Parcelable {
         return password;
     }
 
+    public String getBearerToken() {
+        return bearerToken;
+    }
+
+    public void setBearerToken(String bearerToken) {
+        this.bearerToken = bearerToken;
+    }
+
+    public boolean hasBearerToken() {
+        return !FileSystemUtils.isEmpty(bearerToken);
+    }
+
+    public void clearBearerToken() {
+        bearerToken = null;
+    }
+
+    public String getIdentity() {
+        return identity;
+    }
+
+    public void setIdentity(String identity) {
+        this.identity = identity;
+    }
+
     public Long getExpiration() {
         return expiration;
     }
@@ -112,6 +138,7 @@ public class CertificateConfigRequest implements Parcelable {
             dest.writeString(description);
             dest.writeString(username);
             dest.writeString(password);
+            dest.writeString(identity);
             dest.writeByte((byte) (hasTruststore ? 1 : 0));
             dest.writeByte((byte) (allowAllHostnames ? 1 : 0));
             dest.writeLong(expiration);
@@ -139,6 +166,7 @@ public class CertificateConfigRequest implements Parcelable {
         description = in.readString();
         username = in.readString();
         password = in.readString();
+        identity = in.readString();
         hasTruststore = in.readByte() != 0;
         allowAllHostnames = in.readByte() != 0;
         expiration = in.readLong();
