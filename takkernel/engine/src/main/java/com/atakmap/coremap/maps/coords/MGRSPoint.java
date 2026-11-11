@@ -48,7 +48,11 @@ public class MGRSPoint
         double lng = UTMPoint.getZoneLongitude(lngZone)
                 + UTMPoint.getZoneLongitudeSpan(lngZone, latZone) / 2d;
 
-        MutableUTMPoint mutUtm = new MutableUTMPoint(lat, lng, geoRef);
+        // Keep the zone of the string: re-deriving it from the centre
+        // longitude moved the centre of 31V (3 E) into zone 32 (Norway rule),
+        // so every 31V reference decoded in the wrong zone, hundreds of km off.
+        MutableUTMPoint mutUtm = new MutableUTMPoint();
+        UTMPoint.fromLatLng(geoRef, lat, lng, lngZone, latZone, mutUtm);
 
         MGRSPoint r = out;
         if (r == null)
@@ -134,8 +138,11 @@ public class MGRSPoint
             final double lng = UTMPoint.getZoneLongitude(lngZone)
                     + UTMPoint.getZoneLongitudeSpan(lngZone, latZone) / 2d;
 
-            final MutableUTMPoint mutUtm = new MutableUTMPoint(lat, lng,
-                    geoRef);
+            // Keep the zone of the string: re-deriving it from the centre
+            // longitude moved the centre of 31V (3 E) into zone 32 (Norway rule),
+            // so every 31V reference decoded in the wrong zone, hundreds of km off.
+            final MutableUTMPoint mutUtm = new MutableUTMPoint();
+            UTMPoint.fromLatLng(geoRef, lat, lng, lngZone, latZone, mutUtm);
 
             MGRSPoint r = out;
             if (r == null)
@@ -210,10 +217,10 @@ public class MGRSPoint
                                        double lng,
                                        MutableMGRSPoint out)
     {
-        MGRSPoint r = null;
-        if (out == null)
+        // fill and return out when given (it was ignored and null returned)
+        MGRSPoint r = out;
+        if (r == null)
             r = new MGRSPoint();
-        if (r != null)
         {
             if (r.utmPoint == null)
             {
@@ -288,7 +295,7 @@ public class MGRSPoint
         if (utmPoint.getLatZone() < 10)
         {
             double equatorOffset = (utmNorthing - 10000000d);
-            double yGridOffset = Math.floor(equatorOffset / 100000d);
+            double yGridOffset = Math.floor((equatorOffset + EPSILON) / 100000d);
 
             yGrid = (evenOffset + (int) yGridOffset) % 20;
             if (yGrid < 0)
@@ -300,8 +307,11 @@ public class MGRSPoint
             northing = equatorOffset - (yGridOffset * 100000d);
         } else
         {
-            yGrid = ((int) (utmNorthing / 100000) + evenOffset) % 20;
-            northing = utmNorthing % 100000;
+            // same EPSILON as the northing descriptor, so a value a hair
+            // below a 100 km line keeps its row letter and digits together
+            final double rows = Math.floor((utmNorthing + EPSILON) / 100000d);
+            yGrid = ((int) rows + evenOffset) % 20;
+            northing = utmNorthing - rows * 100000d;
         }
 
         int lngGridMeridian = 4; // E
@@ -317,7 +327,7 @@ public class MGRSPoint
 
         double utmEasting = utmPoint.getEasting();
         double meridianOffset = utmEasting - 500000;
-        double xGridOffset = Math.floor(meridianOffset / 100000d);
+        double xGridOffset = Math.floor((meridianOffset + EPSILON) / 100000d);
         xGrid = lngGridMeridian + (int) xGridOffset;
         easting = meridianOffset - (xGridOffset * 100000d);
         checkValues();
@@ -502,6 +512,7 @@ public class MGRSPoint
     private static final String _LAT_GRID_CHARS = "ABCDEFGHJKLMNPQRSTUV";
     private static final String _LNG_GRID_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
-    // 1cm
-    private final static double EPSILON = 0.01d;
+    // 1 micrometer: absorbs floating point noise only. 1 cm moved points up
+    // to 1 cm below a grid line into the next 1 m square.
+    private final static double EPSILON = 1e-6d;
 }

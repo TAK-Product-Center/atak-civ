@@ -17,11 +17,6 @@ public class UTMPoint
     private static final DecimalFormat _XY_FORMAT = LocaleUtil
             .getDecimalFormat("0");
     private static final double div_6d = 1d / 6d;
-    private static final double div_24d = 1d / 24d;
-    private static final double div_96d = 1d / 96d;
-    private static final double div_120d = 1d / 120d;
-    private static final double div_720d = 1d / 720d;
-    private static final double div_3072d = 1d / 3072d;
     private static final double div_180_pi = 180d / Math.PI;
     private static final double div_pi_180d = Math.PI / 180d;
 
@@ -162,8 +157,9 @@ public class UTMPoint
      * Universal polar stereographic coordinate system
      */
     public static UTMPoint fromLatLng(final Ellipsoid geoRef, final double lat,
-                                      final double lng, MutableUTMPoint out)
+                                      double lng, MutableUTMPoint out)
     {
+        lng = normalizeLongitude(lng);
         int lngZone = (int) ((lng + 180d) / 6d) + 1;
         int latZone = (int) ((lat + 80d) / 8d);
 
@@ -209,73 +205,50 @@ public class UTMPoint
     }
 
     /**
-     * Function converts lat/lon to UTM zone coordinates. Equations from USGS
-     * bulletin 1532.
+     * Function converts lat/lon to UTM coordinates in the given zone, using
+     * Karney (2011), "Transverse Mercator with an accuracy of a few
+     * nanometers" (Krueger series to order n^6). The USGS bulletin 1532
+     * series used before were off by up to ~5 cm in wide (Norway/Svalbard)
+     * zones, enough to change the last digit of a 1 m MGRS reference.
      */
-    private static UTMPoint fromLatLng(final Ellipsoid geoRef,
+    static UTMPoint fromLatLng(final Ellipsoid geoRef,
                                        final double lat, final double lng, final int lngZone,
                                        final int latZone, MutableUTMPoint out)
     {
 
-        double a = geoRef.getSemiMajorAxis();
-        double eccSquared = geoRef.getFirstEccentricitySquared();
-        double k0 = 0.9996;
+        final Krueger k = Krueger.of(geoRef);
 
-        double lngOrigin;
-        double eccPrimeSquared;
-        double N, T, C, A, M;
+        double lngOrigin = (lngZone - 1) * 6 - 180 + 3;
+        double lambda = lng - lngOrigin;
+        if (lambda < -180d || lambda >= 180d)
+            lambda = normalizeLongitude(lambda);
 
-        double latRadians = lat * div_pi_180d;
-        double lngRadians = lng * div_pi_180d;
-        double lngOriginRadians;
+        final double phi = lat * div_pi_180d;
+        final double lam = lambda * div_pi_180d;
 
-        lngOrigin = (lngZone - 1) * 6 - 180 + 3;
-        lngOriginRadians = lngOrigin * div_pi_180d;
-        eccPrimeSquared = (eccSquared) / (1 - eccSquared);
+        final double tauPrime = k.conformalTau(Math.tan(phi));
+        final double cosLambda = Math.cos(lam);
+        final double xiPrime = Math.atan2(tauPrime, cosLambda);
+        final double etaPrime = asinh(Math.sin(lam)
+                / Math.sqrt(tauPrime * tauPrime + cosLambda * cosLambda));
 
-        final double tanLatRadians = Math.tan(latRadians);
-        final double sinLatRadians = Math.sin(latRadians);
-        final double cosLatRadians = Math.cos(latRadians);
+        double xi = xiPrime;
+        double eta = etaPrime;
+        for (int j = 1; j <= 6; j++)
+        {
+            xi += k.alpha[j] * Math.sin(2 * j * xiPrime)
+                    * Math.cosh(2 * j * etaPrime);
+            eta += k.alpha[j] * Math.cos(2 * j * xiPrime)
+                    * Math.sinh(2 * j * etaPrime);
+        }
 
-        N = a / Math.sqrt(1 - eccSquared * sinLatRadians * sinLatRadians);
-
-        T = tanLatRadians * tanLatRadians;
-        C = eccPrimeSquared * cosLatRadians * cosLatRadians;
-        A = cosLatRadians * (lngRadians - lngOriginRadians);
-
-        M = a * ((1 - eccSquared / 4 - 3 * eccSquared * eccSquared / 64 - 5
-                * eccSquared * eccSquared * eccSquared / 256)
-                * latRadians
-                - (3 * eccSquared / 8 + 3 * eccSquared * eccSquared
-                / 32 + 45 * eccSquared * eccSquared
-                * eccSquared / 1024)
-                * Math.sin(2 * latRadians)
-                + (15 * eccSquared * eccSquared / 256 + 45 * eccSquared
-                * eccSquared * eccSquared / 1024)
-                * Math.sin(4 * latRadians)
-                - (35 * eccSquared * eccSquared
-                * eccSquared * div_3072d)
-                * Math.sin(6 * latRadians));
-
-        double easting = (k0
-                * N
-                * (A + (1 - T + C) * A * A * A * div_6d + (5 - 18 * T + T * T
-                + 72 * C - 58 * eccPrimeSquared)
-                * A * A * A * A * A * div_120d)
-                + 500000.0d);
-
-        double northing = (k0 * (M + N
-                * tanLatRadians
-                * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * A * A * A * A
-                * div_24d
-                + (61 - 58 * T + T * T + 600 * C
-                - 330 * eccPrimeSquared)
-                * A * A * A * A * A * A * div_720d)));
+        double easting = K0 * k.rectifyingRadius * eta + 500000.0d;
+        double northing = K0 * k.rectifyingRadius * xi;
 
         // southern hemisphere
         if (latZone < 10)
         {
-            northing += 10000000.0f;
+            northing += 10000000.0d;
         }
 
         UTMPoint r = out;
@@ -303,14 +276,7 @@ public class UTMPoint
                                     double easting,
                                     double northing, double[] out)
     {
-        double k0 = 0.9996;
-        double a = geoRef.getSemiMajorAxis();
-        double eccSquared = geoRef.getFirstEccentricitySquared();
-        double eccPrimeSquared;
-        double e1 = (1 - Math.sqrt(1 - eccSquared))
-                / (1 + Math.sqrt(1 - eccSquared));
-        double N1, T1, C1, R1, D, M;
-        double mu, phi1Rad;
+        final Krueger k = Krueger.of(geoRef);
 
         // remove 500,000 meter offset for longitude
         double x = easting - 500000.0d;
@@ -324,53 +290,41 @@ public class UTMPoint
 
         double LongOrigin = (lngZone - 1) * 6 - 180 + 3;
 
-        eccPrimeSquared = (eccSquared) / (1 - eccSquared);
+        // Karney (2011) eqs 15-22: Krueger series to order n^6
+        final double eta = x / (K0 * k.rectifyingRadius);
+        final double xi = y / (K0 * k.rectifyingRadius);
 
-        M = y / k0;
-        mu = M
-                / (a * (1 - eccSquared / 4 - 3 * eccSquared * eccSquared / 64
-                - 5
-                * eccSquared * eccSquared * eccSquared / 256));
+        double xiPrime = xi;
+        double etaPrime = eta;
+        for (int j = 1; j <= 6; j++)
+        {
+            xiPrime -= k.beta[j] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+            etaPrime -= k.beta[j] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+        }
 
-        phi1Rad = mu + (3 * e1 / 2 - 27 * e1 * e1 * e1 / 32) * Math.sin(2 * mu)
-                + (21 * e1 * e1 / 16 - 55 * e1 * e1 * e1 * e1 / 32)
-                * Math.sin(4 * mu)
-                + (151 * e1 * e1 * e1 * div_96d)
-                * Math.sin(6 * mu);
-        // double phi1 = ProjMath.radToDeg(phi1Rad);
+        final double sinhEtaPrime = Math.sinh(etaPrime);
+        final double cosXiPrime = Math.cos(xiPrime);
+        final double tauPrime = Math.sin(xiPrime)
+                / Math.sqrt(sinhEtaPrime * sinhEtaPrime + cosXiPrime * cosXiPrime);
 
-        final double sinPhi1Rad = Math.sin(phi1Rad);
-        final double cosPhi1Rad = Math.cos(phi1Rad);
-        final double tanPhi1Rad = Math.tan(phi1Rad);
+        // Newton iteration for tau = tan(latitude)
+        double tau = tauPrime;
+        final double e2 = k.e * k.e;
+        for (int i = 0; i < 10; i++)
+        {
+            final double tauIPrime = k.conformalTau(tau);
+            final double delta = (tauPrime - tauIPrime)
+                    / Math.sqrt(1 + tauIPrime * tauIPrime)
+                    * (1 + (1 - e2) * tau * tau)
+                    / ((1 - e2) * Math.sqrt(1 + tau * tau));
+            tau += delta;
+            if (!(Math.abs(delta) > 1e-12 * Math.max(1d, Math.abs(tau))))
+                break;
+        }
 
-        N1 = a / Math.sqrt(1 - eccSquared * sinPhi1Rad * sinPhi1Rad);
-        T1 = tanPhi1Rad * tanPhi1Rad;
-        C1 = eccPrimeSquared * cosPhi1Rad * cosPhi1Rad;
-        R1 = a * (1 - eccSquared)
-                / Math.pow(1 - eccSquared * sinPhi1Rad * sinPhi1Rad, 1.5);
-        D = x / (N1 * k0);
-
-        double lat = phi1Rad
-                - (N1 * tanPhi1Rad / R1)
-                * (D
-                * D
-                / 2
-                - (5 + 3 * T1 + 10 * C1 - 4 * C1 * C1
-                - 9 * eccPrimeSquared)
-                * D * D * D * D / 24
-                + (61 + 90 * T1 + 298 * C1 + 45
-                * T1 * T1 - 252 * eccPrimeSquared
-                - 3 * C1 * C1)
-                * D * D * D * D * D * D * div_720d);
-        lat = lat * div_180_pi;
-
-        double lon = (D - (1 + 2 * T1 + C1) * D * D * D * div_6d + (5 - 2 * C1
-                + 28
-                * T1
-                - 3 * C1 * C1 + 8 * eccPrimeSquared + 24 * T1 * T1)
-                * D * D * D * D * D * div_120d)
-                / cosPhi1Rad;
-        lon = LongOrigin + lon * div_180_pi;
+        double lat = Math.atan(tau) * div_180_pi;
+        double lon = LongOrigin
+                + Math.atan2(sinhEtaPrime, cosXiPrime) * div_180_pi;
 
         if (out == null)
         {
@@ -382,8 +336,116 @@ public class UTMPoint
         return out;
     }
 
+    /** UTM central meridian scale factor */
+    private static final double K0 = 0.9996;
+
+    /**
+     * Longitude in [-180, 180); 180 is the same meridian as -180 (zone 1).
+     */
+    private static double normalizeLongitude(double lng)
+    {
+        if (lng < -180d || lng >= 180d)
+        {
+            lng = ((lng + 180d) % 360d + 360d) % 360d - 180d;
+        }
+        return lng;
+    }
+
+    private static double asinh(double x)
+    {
+        double y = Math.abs(x);
+        y = Math.log1p(y + y * y / (1 + Math.sqrt(1 + y * y)));
+        return x < 0 ? -y : y;
+    }
+
+    private static double atanh(double x)
+    {
+        double y = Math.abs(x);
+        y = Math.log1p(2 * y / (1 - y)) / 2;
+        return x < 0 ? -y : y;
+    }
+
+    /**
+     * Krueger series coefficients for one ellipsoid, Karney (2011) eqs 14,
+     * 35 and 36. The last one used is cached.
+     */
+    private static final class Krueger
+    {
+        private static volatile Krueger last;
+
+        final double semiMajorAxis;
+        final double eccentricitySquared;
+        final double e;
+        final double rectifyingRadius;
+        final double[] alpha;
+        final double[] beta;
+
+        static Krueger of(Ellipsoid geoRef)
+        {
+            final double a = geoRef.getSemiMajorAxis();
+            final double e2 = geoRef.getFirstEccentricitySquared();
+            Krueger k = last;
+            if (k == null || k.semiMajorAxis != a
+                    || k.eccentricitySquared != e2)
+            {
+                k = new Krueger(a, e2);
+                last = k;
+            }
+            return k;
+        }
+
+        private Krueger(double a, double e2)
+        {
+            semiMajorAxis = a;
+            eccentricitySquared = e2;
+            e = Math.sqrt(e2);
+            final double f = e2 / (1 + Math.sqrt(1 - e2));
+            final double n = f / (2 - f);
+            final double n2 = n * n, n3 = n * n2, n4 = n * n3, n5 = n * n4,
+                    n6 = n * n5;
+            rectifyingRadius = a / (1 + n)
+                    * (1 + n2 / 4 + n4 / 64 + n6 / 256);
+            alpha = new double[] {
+                    0,
+                    n / 2 - 2d / 3 * n2 + 5d / 16 * n3 + 41d / 180 * n4
+                            - 127d / 288 * n5 + 7891d / 37800 * n6,
+                    13d / 48 * n2 - 3d / 5 * n3 + 557d / 1440 * n4
+                            + 281d / 630 * n5 - 1983433d / 1935360 * n6,
+                    61d / 240 * n3 - 103d / 140 * n4 + 15061d / 26880 * n5
+                            + 167603d / 181440 * n6,
+                    49561d / 161280 * n4 - 179d / 168 * n5
+                            + 6601661d / 7257600 * n6,
+                    34729d / 80640 * n5 - 3418889d / 1995840 * n6,
+                    212378941d / 319334400 * n6
+            };
+            beta = new double[] {
+                    0,
+                    n / 2 - 2d / 3 * n2 + 37d / 96 * n3 - 1d / 360 * n4
+                            - 81d / 512 * n5 + 96199d / 604800 * n6,
+                    1d / 48 * n2 + 1d / 15 * n3 - 437d / 1440 * n4
+                            + 46d / 105 * n5 - 1118711d / 3870720 * n6,
+                    17d / 480 * n3 - 37d / 840 * n4 - 209d / 4480 * n5
+                            + 5569d / 90720 * n6,
+                    4397d / 161280 * n4 - 11d / 504 * n5
+                            - 830251d / 7257600 * n6,
+                    4583d / 161280 * n5 - 108847d / 3991680 * n6,
+                    20648693d / 638668800 * n6
+            };
+        }
+
+        /** Tangent of the conformal latitude, Karney (2011) eqs 7 and 9 */
+        double conformalTau(double tau)
+        {
+            final double sigma = Math.sinh(e * atanh(e * tau
+                    / Math.sqrt(1 + tau * tau)));
+            return tau * Math.sqrt(1 + sigma * sigma)
+                    - sigma * Math.sqrt(1 + tau * tau);
+        }
+    }
+
     public static String getZoneDescriptorAt(double lat, double lng)
     {
+        lng = normalizeLongitude(lng);
         int lngZone = (int) ((lng + 180d) * div_6d) + 1;
         int latZone = (int) ((lat + 80d) / 8d);
 
