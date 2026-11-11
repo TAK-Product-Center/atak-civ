@@ -75,8 +75,11 @@ public class MGRSPointTest {
     public void testUTMAccuracy() {
         UTMPoint u = UTMPoint.fromLatLng(Ellipsoid.WGS_84, 63.344656283826,
                 4.32988630647, null);
-        assertEquals(266394.732062, u.getEasting(), 1e-5);
-        assertEquals(7032505.999214, u.getNorthing(), 1e-5);
+        // GeographicLib values are for WGS 84 with f = 1/298.257223563.
+        // Ellipsoid.WGS_84 is defined by b = 6356752.3142, which moves the
+        // northing here by about 5e-5 m, so allow 1e-4 m.
+        assertEquals(266394.732062, u.getEasting(), 1e-4);
+        assertEquals(7032505.999214, u.getNorthing(), 1e-4);
         double[] ll = u.toLatLng(null);
         assertEquals(63.344656283826, ll[0], 1e-10);
         assertEquals(4.32988630647, ll[1], 1e-10);
