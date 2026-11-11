@@ -64,8 +64,17 @@ TAKErr EGM96::getHeight(double *value, const GeoPoint2 &location) NOTHROWS
         return TE_IllegalState;
     }
 
-    // wrap longitude
-    double lon = location.longitude >= 0 ? location.longitude : location.longitude + 360;
+    if (TE_ISNAN(location.latitude) || TE_ISNAN(location.longitude)) {
+        *value = NAN;
+        return TE_InvalidArg;
+    }
+
+    // wrap longitude into [0, 360)
+    double lon = std::fmod(location.longitude, 360.0);
+    if (lon < 0)
+        lon += 360.0;
+    if (!(lon < 360.0)) // -1e-17 + 360 rounds to 360
+        lon = 0.0;
 
     // throw out bad latitude values
     if(location.latitude > 90.0 || location.latitude < -90.0)
@@ -84,7 +93,9 @@ TAKErr EGM96::getHeight(double *value, const GeoPoint2 &location) NOTHROWS
     auto leftCol = (std::size_t) (lon / INTERVAL);
     std::size_t rightCol = leftCol + 1u;
     if (lon >= 360 - INTERVAL) {
-        leftCol = NUM_ROWS - 1u;
+        // last column (359.75 E); NUM_ROWS - 1 was column 720 (180 E), which
+        // made u about 719 and extrapolated for longitudes 0.25 W to 0
+        leftCol = NUM_COLS - 1u;
         rightCol = 0u;
     }
 

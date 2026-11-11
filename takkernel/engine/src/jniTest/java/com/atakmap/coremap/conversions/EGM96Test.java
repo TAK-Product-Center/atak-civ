@@ -28,6 +28,21 @@ public class EGM96Test extends KernelJniTest {
     }
 
     @Test
+    public void getOffsetWestOfPrimeMeridian() {
+        // 0.25 W to 0 used to interpolate against the column at 180 E
+        // (extrapolating by a factor of ~719); the geoid is smooth there
+        for (double lat : new double[] { 51.4778, 0, 40.4, -33.9 }) {
+            double east = EGM96.getOffset(lat, 0.01);
+            for (double lon : new double[] { -0.24, -0.1, -0.01, 359.9 }) {
+                Assert.assertEquals(east, EGM96.getOffset(lat, lon), 0.5);
+            }
+        }
+        Assert.assertEquals(EGM96.getOffset(10, 10), EGM96.getOffset(10, 370), .001);
+        Assert.assertEquals(EGM96.getOffset(10, 10), EGM96.getOffset(10, -350), .001);
+        Assert.assertTrue(Double.isNaN(EGM96.getOffset(10, Double.NaN)));
+    }
+
+    @Test
     public void get() {
         Assert.assertEquals(50, EGM96.getHAE(new GeoPoint(40, 100, 50)), .001);
         Assert.assertEquals(150, EGM96.getHAE(new GeoPoint(40, 100, 150)),
