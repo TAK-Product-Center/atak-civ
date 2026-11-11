@@ -232,15 +232,9 @@ public class UTMPoint
         final double etaPrime = asinh(Math.sin(lam)
                 / Math.sqrt(tauPrime * tauPrime + cosLambda * cosLambda));
 
-        double xi = xiPrime;
-        double eta = etaPrime;
-        for (int j = 1; j <= 6; j++)
-        {
-            xi += k.alpha[j] * Math.sin(2 * j * xiPrime)
-                    * Math.cosh(2 * j * etaPrime);
-            eta += k.alpha[j] * Math.cos(2 * j * xiPrime)
-                    * Math.sinh(2 * j * etaPrime);
-        }
+        final double[] dXiEta = kruegerSum(k.alpha, xiPrime, etaPrime);
+        final double xi = xiPrime + dXiEta[0];
+        final double eta = etaPrime + dXiEta[1];
 
         double easting = K0 * k.rectifyingRadius * eta + 500000.0d;
         double northing = K0 * k.rectifyingRadius * xi;
@@ -294,13 +288,9 @@ public class UTMPoint
         final double eta = x / (K0 * k.rectifyingRadius);
         final double xi = y / (K0 * k.rectifyingRadius);
 
-        double xiPrime = xi;
-        double etaPrime = eta;
-        for (int j = 1; j <= 6; j++)
-        {
-            xiPrime -= k.beta[j] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
-            etaPrime -= k.beta[j] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
-        }
+        final double[] dXiEta = kruegerSum(k.beta, xi, eta);
+        final double xiPrime = xi - dXiEta[0];
+        final double etaPrime = eta - dXiEta[1];
 
         final double sinhEtaPrime = Math.sinh(etaPrime);
         final double cosXiPrime = Math.cos(xiPrime);
@@ -308,7 +298,7 @@ public class UTMPoint
                 / Math.sqrt(sinhEtaPrime * sinhEtaPrime + cosXiPrime * cosXiPrime);
 
         // Newton iteration for tau = tan(latitude)
-        double tau = tauPrime;
+        double tau = tauPrime / (1 - k.e * k.e);
         final double e2 = k.e * k.e;
         for (int i = 0; i < 10; i++)
         {
@@ -334,6 +324,39 @@ public class UTMPoint
         out[1] = lon;
 
         return out;
+    }
+
+    /**
+     * Sum of c[j] sin(2 j zeta) for j = 1..6, zeta = xi + i eta, by Clenshaw
+     * summation (Karney 2011, section 8), so only one sin, cos, sinh and
+     * cosh are evaluated
+     *
+     * @return { sum of c[j] sin(2 j xi) cosh(2 j eta), sum of c[j] cos(2 j
+     *         xi) sinh(2 j eta) }
+     */
+    private static double[] kruegerSum(double[] c, double xi, double eta)
+    {
+        final double sin2 = Math.sin(2 * xi);
+        final double cos2 = Math.cos(2 * xi);
+        final double sinh2 = Math.sinh(2 * eta);
+        final double cosh2 = Math.cosh(2 * eta);
+        // a = 2 cos(2 zeta)
+        final double ar = 2 * cos2 * cosh2;
+        final double ai = -2 * sin2 * sinh2;
+        double y1r = 0, y1i = 0, y2r = 0, y2i = 0;
+        for (int j = c.length - 1; j >= 1; j--)
+        {
+            final double y0r = ar * y1r - ai * y1i - y2r + c[j];
+            final double y0i = ar * y1i + ai * y1r - y2i;
+            y2r = y1r;
+            y2i = y1i;
+            y1r = y0r;
+            y1i = y0i;
+        }
+        // sum = y1 sin(2 zeta)
+        final double sr = sin2 * cosh2;
+        final double si = cos2 * sinh2;
+        return new double[] { y1r * sr - y1i * si, y1r * si + y1i * sr };
     }
 
     /** UTM central meridian scale factor */
