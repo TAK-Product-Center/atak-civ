@@ -31,7 +31,12 @@ public class MutableMGRSPoint extends MGRSPoint
 
     public void offset(double byEastingMeters, double myNorthingMeters)
     {
-        if (utmPoint != null)
+        if (upsBand != 0)
+        {
+            setUPS(upsRef, UPSGrid.isNorth(upsBand),
+                    upsEasting + byEastingMeters,
+                    upsNorthing + myNorthingMeters);
+        } else if (utmPoint != null)
         {
             utmPoint.offset(byEastingMeters, myNorthingMeters);
             calcMGRSFromUTM();

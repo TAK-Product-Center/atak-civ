@@ -36,6 +36,13 @@ public class MGRSPoint
         // Remove any formatting.
         mgrsString = mgrsString.replace(" ", "").replace("\u200e", "");
 
+        // polar (UPS) references start with band A, B, Y or Z, no zone number
+        if (mgrsString.length() > 0 && UPSGrid.isBand(mgrsString.charAt(0))
+                && (mgrsString.length() == 1
+                        || !Character.isDigit(mgrsString.charAt(1))))
+            return decodePolar(mgrsString.toUpperCase(LocaleUtil.getCurrent()),
+                    geoRef, out);
+
         if (!Character.isDigit(mgrsString.charAt(1)))
             mgrsString = "0" + mgrsString;
 
@@ -126,6 +133,10 @@ public class MGRSPoint
 
         try
         {
+            if (zone.length() == 1 && UPSGrid.isBand(zone.charAt(0)))
+                return decodePolar((zone + square + easting + northing)
+                        .toUpperCase(LocaleUtil.getCurrent()), geoRef, out);
+
             if (!Character.isDigit(zone.charAt(1)))
                 zone = "0" + zone;
 
@@ -221,7 +232,12 @@ public class MGRSPoint
         MGRSPoint r = out;
         if (r == null)
             r = new MGRSPoint();
+        if (UPSGrid.isPolar(lat))
         {
+            r.setUPS(geoRef, lat, lng);
+        } else
+        {
+            r.upsBand = 0;
             if (r.utmPoint == null)
             {
                 r.utmPoint = new MutableUTMPoint();
@@ -240,6 +256,11 @@ public class MGRSPoint
 
     public MGRSPoint(double lat, double lng, Ellipsoid geoRef)
     {
+        if (UPSGrid.isPolar(lat))
+        {
+            setUPS(geoRef, lat, lng);
+            return;
+        }
         utmPoint = new MutableUTMPoint(lat, lng, geoRef);
         calcMGRSFromUTM();
     }
@@ -260,7 +281,14 @@ public class MGRSPoint
         xGrid = mgrsPoint.xGrid;
         easting = mgrsPoint.easting;
         northing = mgrsPoint.northing;
-        checkValues();
+        upsBand = mgrsPoint.upsBand;
+        upsColumn = mgrsPoint.upsColumn;
+        upsRow = mgrsPoint.upsRow;
+        upsEasting = mgrsPoint.upsEasting;
+        upsNorthing = mgrsPoint.upsNorthing;
+        upsRef = mgrsPoint.upsRef;
+        if (upsBand == 0)
+            checkValues();
     }
 
     /**
@@ -273,7 +301,11 @@ public class MGRSPoint
     public double[] toLatLng(double[] out)
     {
         double[] r = null;
-        if (utmPoint != null)
+        if (upsBand != 0)
+        {
+            r = UPSGrid.inverse(upsRef, UPSGrid.isNorth(upsBand), upsEasting,
+                    upsNorthing, out);
+        } else if (utmPoint != null)
         {
             r = utmPoint.toLatLng(out);
         }
@@ -374,7 +406,7 @@ public class MGRSPoint
 
     public boolean isUPSBased()
     {
-        return false;
+        return upsBand != 0;
     }
 
     public String getZoneDescriptor()
@@ -383,9 +415,12 @@ public class MGRSPoint
         if (utmPoint != null)
         {
             zoneDesc = utmPoint.getZoneDescriptor();
+        } else if (upsBand != 0)
+        {
+            // polar (UPS): band letter only, no zone number
+            zoneDesc = String.valueOf(upsBand);
         } else
         {
-            // TODO: UPSPoint
             zoneDesc = "";
         }
 
@@ -399,6 +434,10 @@ public class MGRSPoint
 
     public String getGridDescriptor()
     {
+        if (upsBand != 0)
+            return new String(new char[] {
+                    upsColumn, upsRow
+            });
         char[] chars = {
                 _LNG_GRID_CHARS.charAt(xGrid),
                 _LAT_GRID_CHARS.charAt(yGrid)
@@ -440,6 +479,70 @@ public class MGRSPoint
             return "99999";
         else
             return _EAST_NORTH_DEC_FMT.format(Math.floor(northing + EPSILON));
+    }
+
+    /**
+     * Polar (UPS) point from latitude and longitude (at and north of 84 N,
+     * south of 80 S).
+     */
+    protected void setUPS(Ellipsoid geoRef, double lat, double lng)
+    {
+        final double[] en = UPSGrid.forward(geoRef, lat, lng);
+        setUPS(geoRef, lat >= 0, en[0], en[1]);
+    }
+
+    /**
+     * Polar (UPS) point from full UPS easting and northing.
+     */
+    protected void setUPS(Ellipsoid geoRef, boolean north, double upsE,
+            double upsN)
+    {
+        utmPoint = null;
+        upsRef = geoRef;
+        upsEasting = upsE;
+        upsNorthing = upsN;
+        final double cols = Math.floor((upsE + EPSILON) / 100000d);
+        final double rows = Math.floor((upsN + EPSILON) / 100000d);
+        upsBand = UPSGrid.band(north, upsE + EPSILON);
+        upsColumn = UPSGrid.column(upsBand, (int) cols);
+        upsRow = UPSGrid.row(upsBand, (int) rows);
+        easting = upsE - cols * 100000d;
+        northing = upsN - rows * 100000d;
+    }
+
+    private static MGRSPoint decodePolar(String s, Ellipsoid geoRef,
+            MutableMGRSPoint out)
+    {
+        MGRSPoint r = out;
+        if (r == null)
+            r = new MGRSPoint();
+        final char band = s.charAt(0);
+        final boolean north = UPSGrid.isNorth(band);
+        if (s.length() == 1)
+        {
+            r.setUPS(geoRef, north, UPSGrid.FALSE_EN, UPSGrid.FALSE_EN);
+            return r;
+        }
+        if (s.length() < 3)
+            throw new IllegalArgumentException("bad MGRS: " + s);
+        final int col = UPSGrid.columnIndex(band, s.charAt(1));
+        final int row = UPSGrid.rowIndex(band, s.charAt(2));
+        final String digits = s.substring(3);
+        if (col < 0 || row < 0 || digits.length() % 2 != 0
+                || digits.length() > 10)
+            throw new IllegalArgumentException("bad MGRS: " + s);
+        final int n = digits.length() / 2;
+        double e = 0, nn = 0;
+        if (n > 0)
+        {
+            final double scale = Math.pow(10, 5 - n);
+            e = Double.parseDouble(LocaleUtil.getNaturalNumber(
+                    digits.substring(0, n))) * scale;
+            nn = Double.parseDouble(LocaleUtil.getNaturalNumber(
+                    digits.substring(n))) * scale;
+        }
+        r.setUPS(geoRef, north, col * 100000d + e, row * 100000d + nn);
+        return r;
     }
 
     /**
@@ -500,6 +603,13 @@ public class MGRSPoint
     }
 
     protected MutableUTMPoint utmPoint;
+    /* polar (UPS): band A, B, Y or Z, 0 for UTM */
+    protected char upsBand;
+    protected char upsColumn;
+    protected char upsRow;
+    protected double upsEasting;
+    protected double upsNorthing;
+    protected Ellipsoid upsRef = Ellipsoid.WGS_84;
     /* TODO: UPSPoint _upsPoint; */
     protected int xGrid;
     protected int yGrid;

@@ -84,4 +84,39 @@ public class MGRSPointTest {
         assertEquals(63.344656283826, ll[0], 1e-10);
         assertEquals(4.32988630647, ll[1], 1e-10);
     }
+
+    @Test
+    public void testPolar() {
+        // UPS north of 84 N (and at 84 N) and south of 80 S
+        double[][] points = {
+                { 88.389186782401, 149.062244586389 },
+                { -89.626700543677, -178.41905096312 },
+                { 89.960700839522, -65.333389789462 }, { 84, 0 },
+                { 84, -0.0000001 }, { 90, 0 }, { -90, 0 },
+                { -80.0000001, 0 }, { 85.5, -120 }, { -85.5, 120 }
+        };
+        String[] values = {
+                "ZAJ9194753404", "AZM9885658570", "YZG9603498179",
+                "ZAA0000033272", "YZA9999933272", "ZAH0000000000",
+                "BAN0000000000", "BAZ0000012951", "YTK6711349926",
+                "BGK3288650073"
+        };
+        for (int i = 0; i < values.length; i++) {
+            MGRSPoint m = new MGRSPoint(points[i][0], points[i][1]);
+            assertEquals(values[i], m.toString());
+            assertTrue(m.isUPSBased());
+            assertEquals(points[i][0], decode(values[i])[0], 2e-5);
+        }
+        // 80 S itself is still UTM band C
+        assertEquals("31CDM4186716915", new MGRSPoint(-80, 0).toString());
+        // a GEOTRANS polar reference (ngageoint/mgrs-java#2)
+        double[] ll = decode("AQE3337729769");
+        assertEquals(-80.2345634, ll[0], 1e-5);
+        assertEquals(-135.1345105, ll[1], 1e-5);
+        // out is filled for polar points too
+        MutableMGRSPoint out = new MutableMGRSPoint(0d, 0d);
+        MGRSPoint.fromLatLng(Ellipsoid.WGS_84, 88.389186782401,
+                149.062244586389, out);
+        assertEquals("ZAJ9194753404", out.toString());
+    }
 }
