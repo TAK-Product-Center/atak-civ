@@ -30,12 +30,19 @@ public class EGM96Test extends KernelJniTest {
     @Test
     public void getOffsetWestOfPrimeMeridian() {
         // 0.25 W to 0 used to interpolate against the column at 180 E
-        // (extrapolating by a factor of ~719); the geoid is smooth there
+        // (extrapolating by a factor of ~719, errors of km); the geoid is
+        // continuous across 0, but really slopes by up to ~1.25 m over 0.25
+        // degrees (0.59 m at 40.4 N between 0.24 W and 0.01 E)
         for (double lat : new double[] { 51.4778, 0, 40.4, -33.9 }) {
+            Assert.assertEquals("jump at 0: " + lat, EGM96.getOffset(lat, 0.001),
+                    EGM96.getOffset(lat, -0.001), 0.05);
             double east = EGM96.getOffset(lat, 0.01);
-            for (double lon : new double[] { -0.24, -0.1, -0.01, 359.9 }) {
-                Assert.assertEquals(east, EGM96.getOffset(lat, lon), 0.5);
+            for (double lon : new double[] { -0.24, -0.1, -0.01 }) {
+                Assert.assertEquals("test: " + lat + ", " + lon, east,
+                        EGM96.getOffset(lat, lon), 2.0);
             }
+            Assert.assertEquals(EGM96.getOffset(lat, -0.1),
+                    EGM96.getOffset(lat, 359.9), .001);
         }
         Assert.assertEquals(EGM96.getOffset(10, 10), EGM96.getOffset(10, 370), .001);
         Assert.assertEquals(EGM96.getOffset(10, 10), EGM96.getOffset(10, -350), .001);
