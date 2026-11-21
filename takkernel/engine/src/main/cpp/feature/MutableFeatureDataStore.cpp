@@ -1092,7 +1092,8 @@ MutableFeatureDataStore::isFeatureSetVisible (int64_t featureSetID)
     std::ostringstream strm;
 
     strm << featureSetID;
-    queryArgs.push_back (strm.str ().c_str ());
+    std::string featureSetIDStr = strm.str ();
+    queryArgs.push_back (featureSetIDStr.c_str ());
 
     TAKErr code(TE_Ok);
     LockPtr lock(NULL, NULL);
@@ -1139,7 +1140,8 @@ MutableFeatureDataStore::isFeatureVisible (int64_t featureID)
     std::ostringstream strm;
 
     strm << featureID;
-    queryArgs.push_back (strm.str ().c_str ());
+    std::string featureIDStr = strm.str ();
+    queryArgs.push_back (featureIDStr.c_str ());
 
     std::unique_ptr<db::Cursor> cursor
         (featureDB->query ("SELECT groups.visible, "
