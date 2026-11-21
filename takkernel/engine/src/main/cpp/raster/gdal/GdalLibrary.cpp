@@ -49,7 +49,8 @@ namespace atakmap {
 #else
                         std::filesystem::path gdalDataVer(gdalDir);
                         gdalDataVer.append("gdal.version");
-                        gdalDataVerPath = gdalDataVer.string().c_str();
+                        std::string gdalDataVerStr = gdalDataVer.string();
+                        gdalDataVerPath = gdalDataVerStr.c_str();
 #endif
                         if (util::pathExists(gdalDataVerPath)) {
                             util::FileInput input;
